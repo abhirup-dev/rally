@@ -1,0 +1,18 @@
+[package]
+name    = "rally-daemon"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "rallyd"
+path = "src/main.rs"
+
+[dependencies]
+rally-core        = { workspace = true }
+rally-proto       = { workspace = true }
+rally-store       = { workspace = true }
+rally-events      = { workspace = true }
+rally-capture     = { workspace = true }
+rally-hooks       = { workspace = true }
+rally-inbox       = { workspace = true }
+rally-host-zellij = { workspace = true }

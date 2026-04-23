@@ -1,0 +1,11 @@
+[package]
+name    = "rally-mcp"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "rally-mcp"
+path = "src/main.rs"
+
+[dependencies]
+rally-proto = { workspace = true }

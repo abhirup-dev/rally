@@ -1,0 +1,8 @@
+[package]
+name    = "rally-host-zellij"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rally-core  = { workspace = true }
+rally-proto = { workspace = true }

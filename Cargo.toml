@@ -1,0 +1,37 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/rally-core",
+    "crates/rally-proto",
+    "crates/rally-store",
+    "crates/rally-events",
+    "crates/rally-capture",
+    "crates/rally-host-zellij",
+    "crates/rally-hooks",
+    "crates/rally-inbox",
+    "crates/rally-config",
+    "crates/rally-daemon",
+    "crates/rally-cli",
+    "crates/rally-mcp",
+    "crates/rally-plugin",
+    "crates/rally-test-utils",
+    "xtask",
+]
+
+[workspace.dependencies]
+# Internal
+rally-core       = { path = "crates/rally-core" }
+rally-proto      = { path = "crates/rally-proto" }
+rally-store      = { path = "crates/rally-store" }
+rally-events     = { path = "crates/rally-events" }
+rally-capture    = { path = "crates/rally-capture" }
+rally-host-zellij = { path = "crates/rally-host-zellij" }
+rally-hooks      = { path = "crates/rally-hooks" }
+rally-inbox      = { path = "crates/rally-inbox" }
+rally-config     = { path = "crates/rally-config" }
+rally-test-utils = { path = "crates/rally-test-utils" }
+
+[profile.release]
+lto            = "thin"
+codegen-units  = 1
+strip          = "symbols"
