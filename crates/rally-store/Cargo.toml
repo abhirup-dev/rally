@@ -4,4 +4,14 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-rally-core = { workspace = true }
+rally-core  = { workspace = true, features = ["serde"] }
+rusqlite    = { version = "0.32", features = ["bundled"] }
+serde       = { version = "1", features = ["derive"] }
+serde_json  = "1"
+thiserror   = "2"
+compact_str = "0.8"
+ulid        = "1"
+
+[dev-dependencies]
+rally-test-utils = { workspace = true }
+tempfile         = "3"

@@ -1,5 +1,5 @@
 use proptest::prelude::*;
-use rally_core::agent::{transition, AgentState, AgentTrigger, InvalidTransition};
+use rally_core::agent::{transition, AgentState, AgentTrigger};
 
 // --- Arbitrary impls ---
 
