@@ -4,4 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-rally-core = { workspace = true }
+rally-core  = { workspace = true }
+ulid        = "1"
+compact_str = "0.8"
+thiserror   = "2"
