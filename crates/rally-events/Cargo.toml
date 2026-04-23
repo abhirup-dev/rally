@@ -4,4 +4,12 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-rally-core = { workspace = true }
+rally-core = { workspace = true, features = ["serde"] }
+arc-swap   = "1"
+tokio      = { version = "1", features = ["sync"] }
+tracing    = { workspace = true }
+
+[dev-dependencies]
+compact_str = "0.8"
+ulid        = "1"
+tokio       = { version = "1", features = ["sync", "macros", "rt"] }

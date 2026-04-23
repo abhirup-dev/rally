@@ -35,6 +35,15 @@ pub trait EventLog {
     fn list_for_workspace(&self, id: WorkspaceId) -> Result<Vec<DomainEvent>, Self::Error>;
 }
 
+pub trait AliasRepo {
+    type Error: std::error::Error;
+
+    fn resolve(&self, alias: &str) -> Result<Option<WorkspaceId>, Self::Error>;
+    fn set_alias(&mut self, alias: &str, workspace_id: WorkspaceId) -> Result<(), Self::Error>;
+    fn remove_alias(&mut self, alias: &str) -> Result<(), Self::Error>;
+    fn list_aliases(&self) -> Result<Vec<(String, WorkspaceId)>, Self::Error>;
+}
+
 pub trait Clock: Send + Sync {
     fn now(&self) -> Timestamp;
 }

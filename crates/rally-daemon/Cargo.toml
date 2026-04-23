@@ -8,14 +8,22 @@ name = "rallyd"
 path = "src/main.rs"
 
 [dependencies]
-rally-core        = { workspace = true }
+rally-core        = { workspace = true, features = ["serde"] }
 rally-proto       = { workspace = true }
 rally-store       = { workspace = true }
 rally-events      = { workspace = true }
+rally-config      = { workspace = true }
 rally-capture     = { workspace = true }
 rally-hooks       = { workspace = true }
 rally-inbox       = { workspace = true }
 rally-host-zellij = { workspace = true }
+tokio              = { version = "1", features = ["full"] }
+tokio-util         = { version = "0.7", features = ["codec"] }
+serde_json         = "1"
+compact_str        = { version = "0.8", features = ["serde"] }
+ulid               = "1"
+anyhow             = "1"
+thiserror          = "2"
 tracing            = { workspace = true }
 tracing-subscriber = { workspace = true }
 tracing-appender   = { workspace = true }

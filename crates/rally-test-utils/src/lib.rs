@@ -1,3 +1,5 @@
+pub mod harness;
+
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -6,7 +8,7 @@ use rally_core::agent::Agent;
 use rally_core::event::DomainEvent;
 use rally_core::ids::{AgentId, HookId, InboxItemId, PaneId, Timestamp, WorkspaceId};
 use rally_core::inbox::InboxItem;
-use rally_core::ports::{AgentRepo, Clock, EventLog, IdGen, InboxRepo, WorkspaceRepo};
+use rally_core::ports::{AgentRepo, AliasRepo, Clock, EventLog, IdGen, InboxRepo, WorkspaceRepo};
 use rally_core::workspace::Workspace;
 use ulid::Ulid;
 
@@ -92,6 +94,7 @@ pub struct InMemoryRepo {
     agents: HashMap<AgentId, Agent>,
     inbox: HashMap<InboxItemId, InboxItem>,
     events: Vec<DomainEvent>,
+    aliases: HashMap<String, WorkspaceId>,
 }
 
 impl InMemoryRepo {
@@ -171,5 +174,27 @@ impl EventLog for InMemoryRepo {
     fn list_for_workspace(&self, _id: WorkspaceId) -> Result<Vec<DomainEvent>, Self::Error> {
         // In-memory: return all events (no workspace filter needed in tests).
         Ok(self.events.clone())
+    }
+}
+
+impl AliasRepo for InMemoryRepo {
+    type Error = InMemoryError;
+
+    fn resolve(&self, alias: &str) -> Result<Option<WorkspaceId>, Self::Error> {
+        Ok(self.aliases.get(alias).copied())
+    }
+
+    fn set_alias(&mut self, alias: &str, workspace_id: WorkspaceId) -> Result<(), Self::Error> {
+        self.aliases.insert(alias.to_string(), workspace_id);
+        Ok(())
+    }
+
+    fn remove_alias(&mut self, alias: &str) -> Result<(), Self::Error> {
+        self.aliases.remove(alias);
+        Ok(())
+    }
+
+    fn list_aliases(&self) -> Result<Vec<(String, WorkspaceId)>, Self::Error> {
+        Ok(self.aliases.iter().map(|(k, v)| (k.clone(), *v)).collect())
     }
 }

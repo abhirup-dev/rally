@@ -8,3 +8,4 @@ rally-core  = { workspace = true }
 ulid        = "1"
 compact_str = "0.8"
 thiserror   = "2"
+tempfile    = "3"

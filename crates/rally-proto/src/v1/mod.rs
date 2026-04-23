@@ -47,6 +47,34 @@ pub enum Urgency {
 }
 
 // ---------------------------------------------------------------------------
+// Request envelope (wraps every IPC call)
+// ---------------------------------------------------------------------------
+
+/// Wire-level request wrapper. The server generates `request_id` if the
+/// client omits it; `client_pid` is self-reported for logging (not security).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RequestEnvelope {
+    #[serde(default = "default_request_id")]
+    pub request_id: CompactString,
+    #[serde(default)]
+    pub client_pid: Option<u32>,
+    #[serde(flatten)]
+    pub payload: Request,
+}
+
+fn default_request_id() -> CompactString {
+    CompactString::from(ulid::Ulid::new().to_string())
+}
+
+/// Wire-level response wrapper.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResponseEnvelope {
+    pub request_id: CompactString,
+    #[serde(flatten)]
+    pub payload: Response,
+}
+
+// ---------------------------------------------------------------------------
 // Requests
 // ---------------------------------------------------------------------------
 
@@ -116,16 +144,17 @@ pub enum Response {
     Ok,
     Error { message: String },
     Workspace(WorkspaceView),
-    WorkspaceList(Vec<WorkspaceView>),
+    WorkspaceList { items: Vec<WorkspaceView> },
     Agent(AgentView),
-    AgentList(Vec<AgentView>),
-    InboxList(Vec<InboxItemView>),
+    AgentList { items: Vec<AgentView> },
+    InboxList { items: Vec<InboxItemView> },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkspaceView {
     pub id: WorkspaceId,
     pub name: CompactString,
+    pub canonical_key: CompactString,
     pub repo: Option<PathBuf>,
     pub archived: bool,
     pub created_at: u64,

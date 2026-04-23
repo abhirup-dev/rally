@@ -7,15 +7,16 @@ use tracing::{debug, error, info};
 use crate::StoreError;
 
 /// Current schema version. Bump when adding migrations.
-const SCHEMA_VERSION: u32 = 1;
+const SCHEMA_VERSION: u32 = 2;
 
 const MIGRATION_V1: &str = "
 CREATE TABLE IF NOT EXISTS workspaces (
-    id          TEXT    NOT NULL PRIMARY KEY,
-    name        TEXT    NOT NULL,
-    repo        TEXT,
-    created_at  INTEGER NOT NULL,
-    archived    INTEGER NOT NULL DEFAULT 0
+    id            TEXT    NOT NULL PRIMARY KEY,
+    name          TEXT    NOT NULL,
+    canonical_key TEXT    NOT NULL,
+    repo          TEXT,
+    created_at    INTEGER NOT NULL,
+    archived      INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS agents (
@@ -41,6 +42,20 @@ CREATE TABLE IF NOT EXISTS events (
 );
 
 CREATE INDEX IF NOT EXISTS events_workspace ON events(workspace_id);
+
+CREATE TABLE IF NOT EXISTS aliases (
+    alias        TEXT NOT NULL PRIMARY KEY,
+    workspace_id TEXT NOT NULL REFERENCES workspaces(id)
+);
+";
+
+const MIGRATION_V2: &str = "
+ALTER TABLE workspaces ADD COLUMN canonical_key TEXT NOT NULL DEFAULT '';
+
+CREATE TABLE IF NOT EXISTS aliases (
+    alias        TEXT NOT NULL PRIMARY KEY,
+    workspace_id TEXT NOT NULL REFERENCES workspaces(id)
+);
 ";
 
 /// Thread-safe handle to the SQLite store.
@@ -117,11 +132,21 @@ fn migrate(conn: &Connection) -> Result<(), StoreError> {
         return Ok(());
     }
 
-    info!(migration_version = 1, "applying migration v1");
-    conn.execute_batch(MIGRATION_V1).map_err(|e| {
-        error!(version = 1, error = %e, "migration v1 failed");
-        StoreError::Migration { version: 1, reason: e.to_string() }
-    })?;
+    if version < 1 {
+        info!(migration_version = 1, "applying migration v1 (initial schema)");
+        conn.execute_batch(MIGRATION_V1).map_err(|e| {
+            error!(version = 1, error = %e, "migration v1 failed");
+            StoreError::Migration { version: 1, reason: e.to_string() }
+        })?;
+    }
+
+    if version >= 1 && version < 2 {
+        info!(migration_version = 2, "applying migration v2 (canonical_key + aliases)");
+        conn.execute_batch(MIGRATION_V2).map_err(|e| {
+            error!(version = 2, error = %e, "migration v2 failed");
+            StoreError::Migration { version: 2, reason: e.to_string() }
+        })?;
+    }
 
     conn.execute_batch(&format!("PRAGMA user_version = {SCHEMA_VERSION}"))?;
     info!(schema_version = SCHEMA_VERSION, "migration complete");
