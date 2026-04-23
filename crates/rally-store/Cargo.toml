@@ -11,6 +11,7 @@ serde_json  = "1"
 thiserror   = "2"
 compact_str = "0.8"
 ulid        = "1"
+tracing     = { workspace = true }
 
 [dev-dependencies]
 rally-test-utils = { workspace = true }

@@ -31,6 +31,11 @@ rally-inbox      = { path = "crates/rally-inbox" }
 rally-config     = { path = "crates/rally-config" }
 rally-test-utils = { path = "crates/rally-test-utils" }
 
+# Observability
+tracing            = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-appender   = "0.2"
+
 [profile.release]
 lto            = "thin"
 codegen-units  = 1
