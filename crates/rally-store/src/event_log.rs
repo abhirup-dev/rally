@@ -1,6 +1,7 @@
 use rally_core::event::DomainEvent;
 use rally_core::ids::WorkspaceId;
 use rally_core::ports::EventLog;
+use tracing::debug;
 
 use crate::convert::{event_to_stored, ws_id_to_str};
 use crate::db::Store;
@@ -11,6 +12,12 @@ impl EventLog for Store {
 
     fn append(&mut self, event: &DomainEvent) -> Result<(), Self::Error> {
         let stored = event_to_stored(event);
+        debug!(
+            kind = stored.kind,
+            workspace_id = stored.workspace_id,
+            at_ms = stored.at_ms,
+            "appending domain event"
+        );
         let payload = serde_json::to_string(&stored.payload)?;
         let conn = self.conn.lock().unwrap();
         conn.execute(

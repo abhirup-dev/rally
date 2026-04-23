@@ -2,6 +2,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use rusqlite::Connection;
+use tracing::{debug, error, info};
 
 use crate::StoreError;
 
@@ -73,9 +74,12 @@ impl Store {
 
     /// Open (or create) the database at `path` with WAL mode enabled.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, StoreError> {
+        let path = path.as_ref();
+        info!(path = %path.display(), "opening rally-store database");
         let conn = Connection::open(path)?;
         configure(&conn)?;
         migrate(&conn)?;
+        info!(path = %path.display(), "rally-store ready");
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
         })
@@ -83,6 +87,7 @@ impl Store {
 
     /// Open an in-memory database — useful for tests.
     pub fn open_in_memory() -> Result<Self, StoreError> {
+        info!("opening in-memory rally-store database");
         let conn = Connection::open_in_memory()?;
         configure(&conn)?;
         migrate(&conn)?;
@@ -93,6 +98,7 @@ impl Store {
 }
 
 fn configure(conn: &Connection) -> Result<(), StoreError> {
+    debug!("applying SQLite PRAGMAs: WAL, NORMAL sync, foreign_keys, busy_timeout=5000");
     conn.execute_batch(
         "PRAGMA journal_mode = WAL;
          PRAGMA synchronous  = NORMAL;
@@ -104,17 +110,21 @@ fn configure(conn: &Connection) -> Result<(), StoreError> {
 
 fn migrate(conn: &Connection) -> Result<(), StoreError> {
     let version: u32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+    info!(current_version = version, target_version = SCHEMA_VERSION, "checking migrations");
 
     if version >= SCHEMA_VERSION {
+        info!("schema up to date, no migration needed");
         return Ok(());
     }
 
-    conn.execute_batch(MIGRATION_V1).map_err(|e| StoreError::Migration {
-        version: 1,
-        reason: e.to_string(),
+    info!(migration_version = 1, "applying migration v1");
+    conn.execute_batch(MIGRATION_V1).map_err(|e| {
+        error!(version = 1, error = %e, "migration v1 failed");
+        StoreError::Migration { version: 1, reason: e.to_string() }
     })?;
 
     conn.execute_batch(&format!("PRAGMA user_version = {SCHEMA_VERSION}"))?;
+    info!(schema_version = SCHEMA_VERSION, "migration complete");
 
     Ok(())
 }

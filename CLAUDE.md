@@ -52,18 +52,43 @@ bd close <id>         # Complete work
 
 ## Build & Test
 
-_Add your build and test commands here_
-
 ```bash
-# Example:
-# npm install
-# npm test
+cargo build --workspace
+cargo test --workspace
+cargo clippy --all-targets -- -D warnings
 ```
 
 ## Architecture Overview
 
-_Add a brief overview of your project architecture_
+Hexagonal / ports-and-adapters. `rally-core` — pure domain model, no IO, no async, no Zellij.
+`rally-store` — SQLite WAL persistence implementing `rally-core::ports` traits.
+`rally-daemon` — tokio runtime, unix socket IPC, service layer (Phase 3).
+`rally-cli` — clap CLI talking to the daemon (Phase 3).
+
+## Logging
+
+Structured tracing with the `tracing` crate. Log level controlled by `RALLY_LOG` env var.
+
+```bash
+# Set log level
+RALLY_LOG=debug rallyd           # daemon: all debug
+RALLY_LOG=rally_store=trace rallyd   # store only, trace level
+RALLY_LOG=info rallyd            # default
+
+# Tail log files (Phase 3+)
+tail -f ~/.local/state/rally/logs/rally-daemon.log
+tail -f ~/.local/state/rally/logs/rally-store.log
+tail -f ~/.local/state/rally/logs/rally-cli.log
+```
+
+Log targets per module: `rally_core`, `rally_store`, `rally_daemon`, `rally_cli`.
+Library crates emit tracing events/spans but never install a subscriber — only binary
+entry points (`rallyd`, `rally`) call the init function.
 
 ## Conventions & Patterns
 
-_Add your project-specific conventions here_
+- IDs are `Ulid` wrapped in newtypes (`WorkspaceId`, `AgentId`, etc.) — no raw strings across boundaries.
+- `Timestamp` is a newtype over `u64` (unix ms) — `Copy` + `Ord`, no heap.
+- `DomainEvent` is `#[non_exhaustive]` — always add a wildcard arm in external match.
+- `thiserror` in libraries, `anyhow` only at binary boundaries.
+- Zero `unwrap`/`expect` outside tests and `main`.

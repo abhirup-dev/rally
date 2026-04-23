@@ -8,5 +8,8 @@ name = "rally"
 path = "src/main.rs"
 
 [dependencies]
-rally-proto  = { workspace = true }
-rally-config = { workspace = true }
+rally-proto       = { workspace = true }
+rally-config      = { workspace = true }
+tracing            = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing-appender   = { workspace = true }

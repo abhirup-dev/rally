@@ -1,5 +1,6 @@
 use compact_str::CompactString;
 use thiserror::Error;
+use tracing::warn;
 
 use crate::ids::{AgentId, PaneId, Timestamp, WorkspaceId};
 use crate::pane::PaneRef;
@@ -84,6 +85,11 @@ pub fn transition(
         (Failed, Restarted) => Initializing,
 
         _ => {
+            warn!(
+                state = ?state,
+                trigger = ?trigger,
+                "invalid agent state transition"
+            );
             return Err(InvalidTransition {
                 state,
                 trigger: trigger.clone(),
