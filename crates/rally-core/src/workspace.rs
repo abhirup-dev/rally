@@ -1,5 +1,6 @@
 use compact_str::CompactString;
 use std::path::PathBuf;
+use tracing::debug;
 
 use crate::ids::{Timestamp, WorkspaceId};
 
@@ -53,11 +54,13 @@ pub fn generate_canonical_key(
     // Timestamp as compact sortable string (seconds since epoch, base36-ish)
     let ts = at.as_millis() / 1000;
 
-    if repo_part.is_empty() {
+    let key = if repo_part.is_empty() {
         CompactString::from(format!("{sanitized}-{ts:010x}"))
     } else {
         CompactString::from(format!("{repo_part}-{sanitized}-{ts:010x}"))
-    }
+    };
+    debug!(name, repo = ?repo, ts = at.as_millis(), %key, "canonical key generated");
+    key
 }
 
 fn sanitize_for_key(s: &str) -> String {

@@ -3,7 +3,7 @@ mod jsonc;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 pub use crate::jsonc::strip_jsonc_comments;
 
@@ -228,15 +228,21 @@ impl RallyConfig {
             self.mcp.allow_control = v == "true" || v == "1";
         }
         if let Ok(v) = std::env::var("RALLY_MCP_HTTP_PORT") {
-            if let Ok(port) = v.parse() {
-                debug!(value = port, "env override: RALLY_MCP_HTTP_PORT");
-                self.mcp.http_port = port;
+            match v.parse() {
+                Ok(port) => {
+                    debug!(value = port, "env override: RALLY_MCP_HTTP_PORT");
+                    self.mcp.http_port = port;
+                }
+                Err(_) => warn!(value = %v, var = "RALLY_MCP_HTTP_PORT", "invalid value, ignoring"),
             }
         }
         if let Ok(v) = std::env::var("RALLY_CAPTURE_RING_BUFFER_MB") {
-            if let Ok(mb) = v.parse() {
-                debug!(value = mb, "env override: RALLY_CAPTURE_RING_BUFFER_MB");
-                self.capture.ring_buffer_mb = mb;
+            match v.parse() {
+                Ok(mb) => {
+                    debug!(value = mb, "env override: RALLY_CAPTURE_RING_BUFFER_MB");
+                    self.capture.ring_buffer_mb = mb;
+                }
+                Err(_) => warn!(value = %v, var = "RALLY_CAPTURE_RING_BUFFER_MB", "invalid value, ignoring"),
             }
         }
     }

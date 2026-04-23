@@ -3,8 +3,6 @@ use std::sync::Arc;
 use arc_swap::ArcSwap;
 use rally_core::event::DomainEvent;
 use tokio::sync::broadcast;
-use tracing::warn;
-
 const DEFAULT_CAPACITY: usize = 512;
 
 /// Monotonically increasing version counter for snapshot change detection.
@@ -70,13 +68,10 @@ impl EventBus {
     }
 
     /// Subscribe to live domain events.
+    /// Lag detection belongs at the recv() call site, not here — a freshly
+    /// created receiver has no meaningful backlog.
     pub fn subscribe(&self) -> broadcast::Receiver<DomainEvent> {
-        let rx = self.tx.subscribe();
-        let lag = rx.len();
-        if lag > 0 {
-            warn!(lag, "new subscriber has pending backlog");
-        }
-        rx
+        self.tx.subscribe()
     }
 
     /// Read the latest state snapshot (lock-free).

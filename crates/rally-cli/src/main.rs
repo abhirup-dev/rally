@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 use rally_config::RallyConfig;
 use rally_proto::v1::{Request, Response};
-use tracing::error;
+use tracing::{debug, error, info, warn};
 
 use crate::ipc_client::IpcClient;
 
@@ -101,6 +101,23 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
     let config = RallyConfig::load()?;
     let socket_path = config.socket_path();
 
+    let command_name = match &cli.command {
+        Commands::Workspace { action } => match action {
+            WorkspaceAction::New { .. } => "workspace new",
+            WorkspaceAction::Ls => "workspace ls",
+            WorkspaceAction::Show { .. } => "workspace show",
+        },
+        Commands::Agent { action } => match action {
+            AgentAction::Spawn { .. } => "agent spawn",
+            AgentAction::Ls { .. } => "agent ls",
+            AgentAction::Show { .. } => "agent show",
+        },
+        Commands::Session { action } => match action {
+            SessionAction::Status => "session status",
+        },
+    };
+    debug!(command = command_name, json = cli.json, "cli dispatched");
+
     match cli.command {
         Commands::Workspace { action } => {
             let mut client = connect(&socket_path).await?;
@@ -174,10 +191,10 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
 }
 
 async fn connect(socket_path: &std::path::Path) -> anyhow::Result<IpcClient> {
+    debug!(socket = %socket_path.display(), "connecting to daemon");
     match IpcClient::connect(socket_path).await {
         Ok(c) => Ok(c),
         Err(_) => {
-            // Autostart: spawn rallyd, wait for socket
             eprintln!("rally: daemon not running, starting rallyd...");
             autostart_daemon(socket_path)?;
             IpcClient::connect(socket_path).await.map_err(|e| {
@@ -209,6 +226,7 @@ fn autostart_daemon(socket_path: &std::path::Path) -> anyhow::Result<()> {
     // Set RALLY_DAEMON_SOCKET_PATH so child uses the same socket
     cmd.env("RALLY_DAEMON_SOCKET_PATH", socket_path);
 
+    info!(rallyd_path = %rallyd.display(), socket = %socket_path.display(), "autostarting rallyd");
     let _child = cmd.spawn()?;
 
     // Wait for socket to appear (up to 3 seconds)
@@ -220,6 +238,7 @@ fn autostart_daemon(socket_path: &std::path::Path) -> anyhow::Result<()> {
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
 
+    warn!(attempted_ms = 3000, "rallyd did not start");
     anyhow::bail!("rallyd did not start within 3 seconds")
 }
 

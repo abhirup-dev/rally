@@ -16,6 +16,7 @@ pub async fn serve(listener: UnixListener, service: Arc<RallyService>) {
             Ok((stream, _addr)) => {
                 let svc = Arc::clone(&service);
                 tokio::spawn(async move {
+                    debug!("connection accepted");
                     if let Err(e) = handle_connection(stream, svc).await {
                         warn!(error = %e, "connection handler error");
                     }
@@ -64,12 +65,14 @@ async fn handle_connection(
             client_pid = client_pid.unwrap_or(0),
         );
 
+        let started = std::time::Instant::now();
         let response = async {
             debug!("request_in");
             let result = dispatch(&service, envelope.payload);
+            let duration_ms = started.elapsed().as_millis() as u64;
             match &result {
-                Ok(_) => debug!("response_out"),
-                Err(e) => warn!(error = %e, "request failed"),
+                Ok(_) => debug!(duration_ms, "response_out"),
+                Err(e) => warn!(duration_ms, error = %e, "request failed"),
             }
             result
         }
