@@ -300,6 +300,40 @@ impl RallyService {
             })
             .collect())
     }
+
+    pub fn update_agent_cwd(
+        &self,
+        agent_id: AgentId,
+        cwd: std::path::PathBuf,
+    ) -> anyhow::Result<()> {
+        let store = self.store.lock().unwrap();
+        let mut agent = AgentRepo::get(&*store, agent_id)
+            .map_err(|e| anyhow::anyhow!("{e}"))?
+            .ok_or_else(|| anyhow::anyhow!("agent {agent_id} not found"))?;
+
+        agent.cwd = Some(cwd.clone());
+        if let Some(git_info) = crate::git::discover(&cwd) {
+            agent.project_root = Some(git_info.project_root);
+            agent.branch = git_info.branch;
+        } else {
+            agent.project_root = None;
+            agent.branch = None;
+        }
+
+        let event = DomainEvent::AgentMetadataUpdated {
+            id: agent_id,
+            key: CompactString::from("cwd"),
+            value: serde_json::Value::String(cwd.to_string_lossy().into_owned()),
+            at: self.clock.now(),
+        };
+        store
+            .save_agent_and_event(&agent, &event)
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        drop(store);
+        self.publish_event(event);
+        info!(%agent_id, cwd = %cwd.display(), "agent cwd updated");
+        Ok(())
+    }
 }
 
 fn ws_to_view(ws: &Workspace) -> WorkspaceView {

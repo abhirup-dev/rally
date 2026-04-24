@@ -131,6 +131,10 @@ pub enum Request {
         alias: CompactString,
     },
     ListAliases,
+    UpdateAgentCwd {
+        agent_id: AgentId,
+        cwd: PathBuf,
+    },
 }
 
 /// Serializable trigger enum for the wire layer.

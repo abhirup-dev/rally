@@ -135,6 +135,49 @@ impl ZellijActions {
         }
         Ok(())
     }
+    /// Send data to the rally plugin via `zellij pipe`.
+    /// Targets a specific session if provided, otherwise broadcasts.
+    pub fn pipe_to_plugin(session_name: &str, payload: &str) -> anyhow::Result<()> {
+        let status = std::process::Command::new("zellij")
+            .arg("--session")
+            .arg(session_name)
+            .arg("pipe")
+            .arg("--name")
+            .arg("state_snapshot")
+            .arg("--")
+            .arg(payload)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+
+        match status {
+            Ok(s) if s.success() => Ok(()),
+            Ok(s) => {
+                debug!(session = session_name, exit = ?s.code(), "zellij pipe failed");
+                Ok(())
+            }
+            Err(e) => {
+                debug!(error = %e, "zellij pipe command not found or failed to start");
+                Ok(())
+            }
+        }
+    }
+
+    /// List active Zellij session names. Returns empty vec on error.
+    pub fn list_sessions() -> Vec<String> {
+        let output = std::process::Command::new("zellij")
+            .args(["list-sessions", "--no-formatting", "--short"])
+            .output();
+
+        match output {
+            Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout)
+                .lines()
+                .filter(|l| !l.trim().is_empty())
+                .map(|l| l.trim().to_string())
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -153,7 +196,8 @@ mod tests {
 
     #[test]
     fn new_pane_args_without_session() {
-        let args = ZellijActions::new_pane_args(None, Some("my-agent"), None, &["claude", "--chat"]);
+        let args =
+            ZellijActions::new_pane_args(None, Some("my-agent"), None, &["claude", "--chat"]);
         assert_eq!(
             args,
             vec!["action", "new-pane", "--name", "my-agent", "--", "claude", "--chat"]
@@ -172,11 +216,16 @@ mod tests {
         assert_eq!(
             args,
             vec![
-                "--session", "rally-demo",
-                "action", "new-pane",
-                "--name", "impl",
-                "--cwd", "/home/user/project",
-                "--", "bash"
+                "--session",
+                "rally-demo",
+                "action",
+                "new-pane",
+                "--name",
+                "impl",
+                "--cwd",
+                "/home/user/project",
+                "--",
+                "bash"
             ]
         );
     }
@@ -199,7 +248,14 @@ mod tests {
         let args = ZellijActions::dump_screen_args(Some(&handle), 7);
         assert_eq!(
             args,
-            vec!["--session", "rally-demo", "action", "dump-screen", "--pane-id", "7"]
+            vec![
+                "--session",
+                "rally-demo",
+                "action",
+                "dump-screen",
+                "--pane-id",
+                "7"
+            ]
         );
     }
 }

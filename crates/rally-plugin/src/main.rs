@@ -64,6 +64,7 @@ impl ZellijPlugin for RallyPlugin {
             EventType::PermissionRequestResult,
             EventType::Timer,
             EventType::Key,
+            EventType::CwdChanged,
         ]);
 
         // Layout config can override the CLI path (e.g. for dev builds).
@@ -77,7 +78,7 @@ impl ZellijPlugin for RallyPlugin {
             Event::PermissionRequestResult(PermissionStatus::Granted) => {
                 self.permission_denied = false;
                 self.refresh_state();
-                set_timeout(5.0);
+                set_timeout(30.0);
                 true
             }
             Event::PermissionRequestResult(PermissionStatus::Denied) => {
@@ -86,7 +87,7 @@ impl ZellijPlugin for RallyPlugin {
             }
             Event::Timer(_) => {
                 self.refresh_state();
-                set_timeout(5.0);
+                set_timeout(30.0);
                 false
             }
             Event::Key(key) => {
@@ -95,6 +96,10 @@ impl ZellijPlugin for RallyPlugin {
                     self.ui_version = self.ui_version.saturating_add(1);
                 }
                 changed
+            }
+            Event::CwdChanged(PaneId::Terminal(pane_id), new_cwd, _clients) => {
+                self.handle_cwd_changed(pane_id, new_cwd);
+                false
             }
             Event::RunCommandResult(exit_code, stdout, stderr, context) => {
                 let cmd_type = context.get("type").map(|s| s.as_str()).unwrap_or("");
@@ -218,6 +223,27 @@ impl RallyPlugin {
         self.ensure_selection();
         self.last_error = None;
         true
+    }
+
+    fn handle_cwd_changed(&self, pane_id: u32, new_cwd: std::path::PathBuf) {
+        let agent = self.agents.iter().find(|a| a.pane_id == Some(pane_id));
+        if let Some(agent) = agent {
+            let mut ctx = BTreeMap::new();
+            ctx.insert("type".to_string(), "update_cwd".to_string());
+            run_command(
+                &[
+                    &self.rally_cli_path,
+                    "--json",
+                    "agent",
+                    "update-cwd",
+                    "--agent",
+                    &agent.id,
+                    "--cwd",
+                    &new_cwd.to_string_lossy(),
+                ],
+                ctx,
+            );
+        }
     }
 
     fn refresh_state(&self) {

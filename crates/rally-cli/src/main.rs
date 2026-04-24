@@ -120,6 +120,14 @@ enum AgentAction {
     },
     /// Show agent details
     Show { id: String },
+    /// Update agent CWD (called by plugin on CwdChanged events)
+    #[command(name = "update-cwd")]
+    UpdateCwd {
+        #[arg(long)]
+        agent: String,
+        #[arg(long)]
+        cwd: PathBuf,
+    },
 }
 
 #[derive(Subcommand)]
@@ -195,6 +203,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             AgentAction::Spawn { .. } => "agent spawn",
             AgentAction::Ls { .. } => "agent ls",
             AgentAction::Show { .. } => "agent show",
+            AgentAction::UpdateCwd { .. } => "agent update-cwd",
         },
         Commands::Session { action } => match action {
             SessionAction::Status => "session status",
@@ -303,6 +312,13 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 AgentAction::Show { id } => {
                     let agent_id = parse_agent_id(&id)?;
                     let resp = client.call(Request::GetAgent { id: agent_id }).await?;
+                    print_response(&resp, cli.json);
+                }
+                AgentAction::UpdateCwd { agent, cwd } => {
+                    let agent_id = parse_agent_id(&agent)?;
+                    let resp = client
+                        .call(Request::UpdateAgentCwd { agent_id, cwd })
+                        .await?;
                     print_response(&resp, cli.json);
                 }
             }

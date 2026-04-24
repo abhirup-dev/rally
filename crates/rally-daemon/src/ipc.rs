@@ -204,6 +204,10 @@ fn dispatch(service: &RallyService, request: Request) -> anyhow::Result<Response
             let aliases = service.list_aliases()?;
             Ok(Response::AliasList { items: aliases })
         }
+        Request::UpdateAgentCwd { agent_id, cwd } => {
+            service.update_agent_cwd(agent_id, cwd)?;
+            Ok(Response::Ok)
+        }
         _ => Ok(Response::Error {
             message: "unknown method".into(),
         }),
@@ -227,6 +231,7 @@ fn method_name(req: &Request) -> &'static str {
         Request::SetAlias { .. } => "set_alias",
         Request::ResolveAlias { .. } => "resolve_alias",
         Request::ListAliases => "list_aliases",
+        Request::UpdateAgentCwd { .. } => "update_agent_cwd",
         _ => "unknown",
     }
 }

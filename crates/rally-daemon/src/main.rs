@@ -2,6 +2,7 @@
 
 mod git;
 mod ipc;
+mod pipe_push;
 mod services;
 mod tracing_init;
 
@@ -45,7 +46,11 @@ async fn run() -> anyhow::Result<()> {
     info!(db = %db_path.display(), "store opened");
 
     let event_bus = EventBus::new();
+    let event_bus_for_pusher = event_bus.clone();
     let service = Arc::new(services::RallyService::new(store, event_bus)?);
+
+    // Start pipe pusher — pushes state snapshots to Zellij plugins on state changes
+    pipe_push::spawn_pipe_pusher(Arc::clone(&service), &event_bus_for_pusher);
 
     // Bind unix socket
     let listener = tokio::net::UnixListener::bind(&socket_path)?;
