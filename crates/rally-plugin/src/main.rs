@@ -17,7 +17,7 @@ struct RallyPlugin {
     workspaces: Vec<WorkspaceInfo>,
     agents: Vec<AgentInfo>,
     inbox_items: Vec<InboxItemInfo>,
-    state_version: u64,
+    state_version: Option<u64>,
     show_inbox_detail: bool,
     show_help: bool,
     filter_mode: bool,
@@ -25,6 +25,7 @@ struct RallyPlugin {
     selected_agent_id: Option<String>,
     status_message: Option<String>,
     ui_version: u64,
+    permission_denied: bool,
     last_error: Option<String>,
 }
 
@@ -48,8 +49,13 @@ impl ZellijPlugin for RallyPlugin {
     fn update(&mut self, event: Event) -> bool {
         match event {
             Event::PermissionRequestResult(PermissionStatus::Granted) => {
+                self.permission_denied = false;
                 self.refresh_state();
                 set_timeout(5.0);
+                true
+            }
+            Event::PermissionRequestResult(PermissionStatus::Denied) => {
+                self.permission_denied = true;
                 true
             }
             Event::Timer(_) => {
@@ -121,16 +127,23 @@ impl RallyPlugin {
             return lines;
         }
 
-        // Loading state
-        if self.workspaces.is_empty() {
-            lines.push(Line::from(Span::styled(
-                "Grant permission, then",
-                Style::default().add_modifier(Modifier::DIM),
-            )));
-            lines.push(Line::from(Span::styled(
-                "loading…",
-                Style::default().add_modifier(Modifier::DIM),
-            )));
+        // Loading / permission denied state
+        if self.workspaces.is_empty() && self.state_version.is_none() {
+            if self.permission_denied {
+                lines.push(Line::from(Span::styled(
+                    "Permission denied.",
+                    Style::default().fg(zellij_widgets::prelude::Color::Red),
+                )));
+                lines.push(Line::from(Span::styled(
+                    "Grant RunCommands to continue.",
+                    Style::default().add_modifier(Modifier::DIM),
+                )));
+            } else {
+                lines.push(Line::from(Span::styled(
+                    "Loading state…",
+                    Style::default().add_modifier(Modifier::DIM),
+                )));
+            }
             return lines;
         }
 
@@ -168,11 +181,11 @@ impl RallyPlugin {
     }
 
     fn apply_snapshot(&mut self, snapshot: StateSnapshotResponse) -> bool {
-        if snapshot.version <= self.state_version {
+        if self.state_version.is_some_and(|v| snapshot.version <= v) {
             return false;
         }
 
-        self.state_version = snapshot.version;
+        self.state_version = Some(snapshot.version);
         self.workspaces = snapshot.workspaces;
         self.agents = snapshot.agents;
         self.inbox_items = snapshot.inbox_items;
@@ -388,15 +401,33 @@ mod tests {
         );
 
         assert!(changed);
-        assert_eq!(plugin.state_version, 1);
+        assert_eq!(plugin.state_version, Some(1));
         assert_eq!(plugin.workspaces.len(), 1);
         assert_eq!(plugin.agents.len(), 1);
     }
 
     #[test]
+    fn accepts_first_snapshot_at_version_zero() {
+        let mut plugin = RallyPlugin::default();
+        let changed = plugin.apply_snapshot_bytes(
+            br#"{
+                "kind":"state_snapshot",
+                "version":0,
+                "workspaces":[{"id":"w1","name":"api","canonical_key":"api"}],
+                "agents":[],
+                "inbox_items":[]
+            }"#,
+        );
+
+        assert!(changed);
+        assert_eq!(plugin.state_version, Some(0));
+        assert_eq!(plugin.workspaces.len(), 1);
+    }
+
+    #[test]
     fn ignores_stale_state_snapshot() {
         let mut plugin = RallyPlugin {
-            state_version: 2,
+            state_version: Some(2),
             ..Default::default()
         };
         let changed = plugin.apply_snapshot_bytes(
