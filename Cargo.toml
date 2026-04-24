@@ -17,6 +17,23 @@ members = [
     "crates/rally-test-utils",
     "xtask",
 ]
+# rally-plugin targets wasm32-wasip1; exclude from default `cargo build --workspace`
+default-members = [
+    "crates/rally-core",
+    "crates/rally-proto",
+    "crates/rally-store",
+    "crates/rally-events",
+    "crates/rally-capture",
+    "crates/rally-host-zellij",
+    "crates/rally-hooks",
+    "crates/rally-inbox",
+    "crates/rally-config",
+    "crates/rally-daemon",
+    "crates/rally-cli",
+    "crates/rally-mcp",
+    "crates/rally-test-utils",
+    "xtask",
+]
 
 [workspace.dependencies]
 # Internal

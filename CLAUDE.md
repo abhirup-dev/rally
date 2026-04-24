@@ -53,9 +53,12 @@ bd close <id>         # Complete work
 ## Build & Test
 
 ```bash
-cargo build --workspace
+cargo build                # uses default-members (excludes rally-plugin wasm)
 cargo test --workspace
 cargo clippy --all-targets -- -D warnings
+
+# Plugin (wasm32-wasip1, built separately):
+cargo build -p rally-plugin --target wasm32-wasip1 --release
 ```
 
 ## Architecture Overview
