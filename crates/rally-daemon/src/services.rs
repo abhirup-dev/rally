@@ -8,7 +8,7 @@ use rally_core::ids::{AgentId, Timestamp, WorkspaceId};
 use rally_core::ports::{AgentRepo, AliasRepo, Clock, IdGen, WorkspaceRepo};
 use rally_core::workspace::Workspace;
 use rally_events::EventBus;
-use rally_proto::v1::{AgentView, WorkspaceView};
+use rally_proto::v1::{AgentView, StateSnapshotView, WorkspaceView};
 use rally_store::Store;
 use tracing::{info, instrument};
 use ulid::Ulid;
@@ -206,6 +206,15 @@ impl RallyService {
             all
         };
         Ok(agents.iter().map(agent_to_view).collect())
+    }
+
+    pub fn state_snapshot(&self) -> anyhow::Result<StateSnapshotView> {
+        Ok(StateSnapshotView {
+            version: self.event_bus.version(),
+            workspaces: self.list_workspaces()?,
+            agents: self.list_agents(None)?,
+            inbox_items: Vec::new(),
+        })
     }
 
     pub fn set_alias(&self, alias: &str, workspace_id: WorkspaceId) -> anyhow::Result<()> {

@@ -1,0 +1,16 @@
+---
+source: crates/rally-plugin/src/main.rs
+expression: body
+---
+[1;34m◆[0m [1mapi-service[0m
+ [7m>[0m [32m●[0m agent-0[2m (cc) p:10[0m
+   [33m⚠[0m agent-2[2m (cc) p:12[0m
+   [32m○[0m agent-4[2m (cc) p:14[0m
+[1;34m◆[0m [1mweb-client[0m
+   [33m◐[0m agent-1[2m (cc) p:11[0m
+   [31m◉[0m agent-3[2m (cc) p:13[0m
+[1mInbox[0m  high:10 medium:10
+  20 open · [2mpress i for detail[0m
+────────────────────────────────────────────────────────────────────────
+5 agents [32m1●[0m [33m2⚠[0m
+[2m[N]ext [j/k]move [f]ocus [a]ck [s]pawn [/]filter [?]help[0m

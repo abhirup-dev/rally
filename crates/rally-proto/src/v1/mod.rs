@@ -114,6 +114,7 @@ pub enum Request {
     AckInboxItem {
         id: InboxItemId,
     },
+    GetStateSnapshot,
     BindPane {
         agent_id: AgentId,
         session_name: CompactString,
@@ -162,6 +163,7 @@ pub enum Response {
     Agent(AgentView),
     AgentList { items: Vec<AgentView> },
     InboxList { items: Vec<InboxItemView> },
+    StateSnapshot(StateSnapshotView),
     AliasResolved { workspace_id: Option<WorkspaceId> },
     AliasList { items: Vec<AliasView> },
 }
@@ -201,6 +203,14 @@ pub struct InboxItemView {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StateSnapshotView {
+    pub version: u64,
+    pub workspaces: Vec<WorkspaceView>,
+    pub agents: Vec<AgentView>,
+    pub inbox_items: Vec<InboxItemView>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AliasView {
     pub alias: CompactString,
     pub workspace_id: WorkspaceId,
@@ -216,6 +226,29 @@ pub struct EventEnvelope {
     pub version: u64,
     pub at: u64,
     pub payload: EventPayload,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn state_snapshot_response_serializes_as_plugin_payload() {
+        let response = Response::StateSnapshot(StateSnapshotView {
+            version: 7,
+            workspaces: Vec::new(),
+            agents: Vec::new(),
+            inbox_items: Vec::new(),
+        });
+
+        let value = serde_json::to_value(response).unwrap();
+
+        assert_eq!(value["kind"], "state_snapshot");
+        assert_eq!(value["version"], 7);
+        assert!(value["workspaces"].is_array());
+        assert!(value["agents"].is_array());
+        assert!(value["inbox_items"].is_array());
+    }
 }
 
 #[non_exhaustive]

@@ -75,6 +75,9 @@ enum Commands {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         command: Vec<String>,
     },
+    /// Internal state snapshot endpoint for the Zellij sidebar plugin
+    #[command(name = "_plugin-state", hide = true)]
+    PluginState,
 }
 
 #[derive(Subcommand)]
@@ -208,6 +211,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::InstallPlugin => "install-plugin",
         Commands::Layout { .. } => "layout export",
         Commands::Attach { .. } => "_attach",
+        Commands::PluginState => "_plugin-state",
     };
     debug!(command = command_name, json = cli.json, "cli dispatched");
 
@@ -363,6 +367,12 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                     print_response(&resp, cli.json);
                 }
             }
+        }
+
+        Commands::PluginState => {
+            let mut client = connect(&socket_path).await?;
+            let resp = client.call(Request::GetStateSnapshot).await?;
+            print_response(&resp, true);
         }
 
         Commands::Capture { action } => {

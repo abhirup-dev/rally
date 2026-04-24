@@ -143,6 +143,10 @@ fn dispatch(service: &RallyService, request: Request) -> anyhow::Result<Response
         Request::AckInboxItem { .. } => Ok(Response::Error {
             message: "ack not yet implemented".into(),
         }),
+        Request::GetStateSnapshot => {
+            let snapshot = service.state_snapshot()?;
+            Ok(Response::StateSnapshot(snapshot))
+        }
         Request::BindPane {
             agent_id,
             session_name,
@@ -187,6 +191,7 @@ fn method_name(req: &Request) -> &'static str {
         Request::EmitAgentEvent { .. } => "emit_agent_event",
         Request::ListInbox { .. } => "list_inbox",
         Request::AckInboxItem { .. } => "ack_inbox_item",
+        Request::GetStateSnapshot => "get_state_snapshot",
         Request::BindPane { .. } => "bind_pane",
         Request::SetAlias { .. } => "set_alias",
         Request::ResolveAlias { .. } => "resolve_alias",
