@@ -32,6 +32,93 @@ fn arb_trigger() -> impl Strategy<Value = AgentTrigger> {
     ]
 }
 
+fn all_states() -> [AgentState; 8] {
+    [
+        AgentState::Initializing,
+        AgentState::Running,
+        AgentState::Idle,
+        AgentState::WaitingForInput,
+        AgentState::AttentionRequired,
+        AgentState::Completed,
+        AgentState::Failed,
+        AgentState::Stopped,
+    ]
+}
+
+fn all_triggers() -> [AgentTrigger; 11] {
+    [
+        AgentTrigger::Started,
+        AgentTrigger::IdleTimeout,
+        AgentTrigger::InputReceived,
+        AgentTrigger::HookWaitingForInput,
+        AgentTrigger::CaptureRuleAttention,
+        AgentTrigger::InputResolved,
+        AgentTrigger::Acknowledged,
+        AgentTrigger::HookCompleted,
+        AgentTrigger::HookFailed,
+        AgentTrigger::StopRequested,
+        AgentTrigger::Restarted,
+    ]
+}
+
+#[test]
+fn exhaustive_transition_table() {
+    // Every valid (state, trigger) → expected_state pair from the state machine.
+    let valid: &[(AgentState, AgentTrigger, AgentState)] = &[
+        (AgentState::Initializing, AgentTrigger::Started, AgentState::Running),
+
+        (AgentState::Running, AgentTrigger::IdleTimeout, AgentState::Idle),
+        (AgentState::Running, AgentTrigger::HookWaitingForInput, AgentState::WaitingForInput),
+        (AgentState::Running, AgentTrigger::CaptureRuleAttention, AgentState::AttentionRequired),
+        (AgentState::Running, AgentTrigger::HookCompleted, AgentState::Completed),
+        (AgentState::Running, AgentTrigger::HookFailed, AgentState::Failed),
+        (AgentState::Running, AgentTrigger::StopRequested, AgentState::Stopped),
+
+        (AgentState::Idle, AgentTrigger::InputReceived, AgentState::Running),
+        (AgentState::Idle, AgentTrigger::HookWaitingForInput, AgentState::WaitingForInput),
+        (AgentState::Idle, AgentTrigger::StopRequested, AgentState::Stopped),
+
+        (AgentState::WaitingForInput, AgentTrigger::InputResolved, AgentState::Running),
+        (AgentState::WaitingForInput, AgentTrigger::CaptureRuleAttention, AgentState::AttentionRequired),
+        (AgentState::WaitingForInput, AgentTrigger::StopRequested, AgentState::Stopped),
+
+        (AgentState::AttentionRequired, AgentTrigger::Acknowledged, AgentState::Running),
+        (AgentState::AttentionRequired, AgentTrigger::StopRequested, AgentState::Stopped),
+
+        (AgentState::Stopped, AgentTrigger::Restarted, AgentState::Initializing),
+        (AgentState::Failed, AgentTrigger::Restarted, AgentState::Initializing),
+    ];
+
+    // Verify all valid transitions produce expected results.
+    for (state, trigger, expected) in valid {
+        let result = transition(*state, trigger);
+        assert_eq!(
+            result,
+            Ok(*expected),
+            "{state:?} + {trigger:?} should → {expected:?}"
+        );
+    }
+
+    // Verify every other (state, trigger) pair is rejected.
+    for state in &all_states() {
+        for trigger in &all_triggers() {
+            if !valid.iter().any(|(s, t, _)| *s == *state && *t == *trigger) {
+                let result = transition(*state, trigger);
+                assert!(
+                    result.is_err(),
+                    "{state:?} + {trigger:?} should be invalid but got {:?}",
+                    result.unwrap()
+                );
+            }
+        }
+    }
+
+    // Assert we covered the full cross product.
+    assert_eq!(valid.len(), 17, "expected exactly 17 valid transitions");
+    let total_pairs = all_states().len() * all_triggers().len();
+    assert_eq!(total_pairs - valid.len(), 71, "expected 71 invalid pairs");
+}
+
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(200_000))]
 

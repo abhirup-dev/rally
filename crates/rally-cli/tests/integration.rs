@@ -202,18 +202,20 @@ fn alias_set_resolve_list() {
 }
 
 fn ipc_call(socket_path: &std::path::Path, method_fields_json: &str) -> serde_json::Value {
+    let envelope = format!(r#"{{"request_id":"test-req",{}}}"#, method_fields_json);
+    ipc_raw(socket_path, &envelope)
+}
+
+fn ipc_raw(socket_path: &std::path::Path, line: &str) -> serde_json::Value {
     let mut stream =
         std::os::unix::net::UnixStream::connect(socket_path).expect("failed to connect to daemon");
-    // RequestEnvelope uses #[serde(flatten)] on payload, and Request uses #[serde(tag = "method")]
-    // So the wire format is: {"request_id":"...", "method":"bind_pane", "agent_id":"...", ...}
-    let envelope = format!(r#"{{"request_id":"test-req",{}}}"#, method_fields_json);
-    writeln!(stream, "{}", envelope).expect("failed to write request");
+    writeln!(stream, "{}", line).expect("failed to write request");
     stream.flush().unwrap();
 
     let mut reader = BufReader::new(stream);
-    let mut line = String::new();
-    reader.read_line(&mut line).expect("failed to read response");
-    serde_json::from_str(&line).expect("invalid JSON response")
+    let mut resp = String::new();
+    reader.read_line(&mut resp).expect("failed to read response");
+    serde_json::from_str(&resp).expect("invalid JSON response")
 }
 
 #[test]
@@ -268,4 +270,50 @@ fn bind_pane_updates_agent_pane_ref() {
     let items2 = agents2["items"].as_array().unwrap();
     assert_eq!(items2[0]["pane_session"], "test-sess");
     assert_eq!(items2[0]["pane_id"], 42);
+}
+
+#[test]
+fn ipc_negative_cases() {
+    let harness = DaemonHarness::start(&DaemonHarness::find_rallyd());
+
+    // Malformed JSON
+    let resp = ipc_raw(harness.socket_path(), "not json at all");
+    assert_eq!(resp["kind"], "error");
+    assert!(resp["message"].as_str().unwrap().contains("parse error"));
+
+    // Valid JSON, missing method field
+    let resp = ipc_raw(
+        harness.socket_path(),
+        r#"{"request_id":"r1","no_method":"true"}"#,
+    );
+    assert_eq!(resp["kind"], "error");
+
+    // Unknown method name
+    let resp = ipc_raw(
+        harness.socket_path(),
+        r#"{"request_id":"r2","method":"nonexistent_method"}"#,
+    );
+    assert_eq!(resp["kind"], "error");
+
+    // BindPane with non-existent agent ID
+    let resp = ipc_call(
+        harness.socket_path(),
+        r#""method":"bind_pane","agent_id":"00000000000000000000000000","session_name":"s","tab_index":0,"pane_id":1"#,
+    );
+    assert_eq!(resp["kind"], "error");
+
+    // ResolveAlias for missing alias — returns null, not error
+    let resp = ipc_call(
+        harness.socket_path(),
+        r#""method":"resolve_alias","alias":"does-not-exist""#,
+    );
+    assert_eq!(resp["kind"], "alias_resolved");
+    assert!(resp["workspace_id"].is_null());
+
+    // Daemon still alive after all negative cases
+    let status = rally_cmd(harness.socket_path())
+        .args(["--json", "session", "status"])
+        .output()
+        .unwrap();
+    assert!(status.status.success(), "daemon should still be healthy");
 }
