@@ -101,13 +101,13 @@ impl ZellijActions {
             cmd.arg("--session").arg(h.session_name.as_str());
         }
         let pane_id_str = pane_id.to_string();
-        cmd.args(["action", "focus-pane-with-id", &pane_id_str]);
-        debug!(pane_id, "running zellij action focus-pane-with-id");
+        cmd.args(["action", "focus-pane-id", &pane_id_str]);
+        debug!(pane_id, "running zellij action focus-pane-id");
         let status = cmd
             .status()
             .map_err(|e| anyhow::anyhow!("zellij focus-pane failed: {e}"))?;
         if !status.success() {
-            anyhow::bail!("zellij action focus-pane-with-id exited with {status}");
+            anyhow::bail!("zellij action focus-pane-id exited with {status}");
         }
         Ok(())
     }
