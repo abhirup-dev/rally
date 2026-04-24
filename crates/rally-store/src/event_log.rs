@@ -20,7 +20,12 @@ pub(crate) fn insert_event(conn: &Connection, event: &DomainEvent) -> Result<(),
     conn.execute(
         "INSERT INTO events (workspace_id, kind, payload_json, at_ms)
          VALUES (?1, ?2, ?3, ?4)",
-        rusqlite::params![stored.workspace_id, stored.kind, payload, stored.at_ms as i64],
+        rusqlite::params![
+            stored.workspace_id,
+            stored.kind,
+            payload,
+            stored.at_ms as i64
+        ],
     )?;
     Ok(())
 }
@@ -44,11 +49,11 @@ impl EventLog for Store {
         )?;
         let ws_str = ws_id_to_str(id);
         let rows = stmt.query_map([&ws_str], |row| {
-            let _seq: i64      = row.get(0)?;
-            let _ws: String    = row.get(1)?;
-            let kind: String   = row.get(2)?;
+            let _seq: i64 = row.get(0)?;
+            let _ws: String = row.get(1)?;
+            let kind: String = row.get(2)?;
             let _payload: String = row.get(3)?;
-            let _at: i64       = row.get(4)?;
+            let _at: i64 = row.get(4)?;
             Ok(kind)
         })?;
 

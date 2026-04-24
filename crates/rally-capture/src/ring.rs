@@ -23,13 +23,16 @@ impl LineIndexedRing {
             if self.lines.len() == self.capacity {
                 self.lines.pop_front();
             }
-            self.lines.push_back(Bytes::copy_from_slice(line.as_bytes()));
+            self.lines
+                .push_back(Bytes::copy_from_slice(line.as_bytes()));
         }
     }
 
     /// Return all buffered lines as UTF-8 strings (best-effort).
     pub fn lines(&self) -> impl Iterator<Item = &str> {
-        self.lines.iter().filter_map(|b| std::str::from_utf8(b).ok())
+        self.lines
+            .iter()
+            .filter_map(|b| std::str::from_utf8(b).ok())
     }
 
     pub fn len(&self) -> usize {
@@ -42,9 +45,7 @@ impl LineIndexedRing {
 
     /// Drain all lines, returning them as a single newline-joined string.
     pub fn snapshot_text(&self) -> String {
-        self.lines()
-            .collect::<Vec<_>>()
-            .join("\n")
+        self.lines().collect::<Vec<_>>().join("\n")
     }
 }
 

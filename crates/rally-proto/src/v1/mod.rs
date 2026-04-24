@@ -206,10 +206,28 @@ pub struct EventEnvelope {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum EventPayload {
-    WorkspaceCreated { id: WorkspaceId, name: CompactString },
-    WorkspaceArchived { id: WorkspaceId },
-    AgentRegistered { id: AgentId, workspace: WorkspaceId, role: CompactString },
-    AgentStateChanged { id: AgentId, from: AgentState, to: AgentState },
-    InboxItemRaised { id: InboxItemId, urgency: Urgency },
-    InboxItemAcked { id: InboxItemId },
+    WorkspaceCreated {
+        id: WorkspaceId,
+        name: CompactString,
+    },
+    WorkspaceArchived {
+        id: WorkspaceId,
+    },
+    AgentRegistered {
+        id: AgentId,
+        workspace: WorkspaceId,
+        role: CompactString,
+    },
+    AgentStateChanged {
+        id: AgentId,
+        from: AgentState,
+        to: AgentState,
+    },
+    InboxItemRaised {
+        id: InboxItemId,
+        urgency: Urgency,
+    },
+    InboxItemAcked {
+        id: InboxItemId,
+    },
 }

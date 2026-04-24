@@ -4,8 +4,8 @@ mod tracing_init;
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
-use rally_config::RallyConfig;
 use rally_capture::CaptureSource;
+use rally_config::RallyConfig;
 use rally_proto::v1::{Request, Response};
 use tracing::{debug, error, info, warn};
 
@@ -188,10 +188,12 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             let mut client = connect(&socket_path).await?;
             match action {
                 WorkspaceAction::New { name, repo } => {
-                    let resp = client.call(Request::CreateWorkspace {
-                        name: name.into(),
-                        repo,
-                    }).await?;
+                    let resp = client
+                        .call(Request::CreateWorkspace {
+                            name: name.into(),
+                            repo,
+                        })
+                        .await?;
                     print_response(&resp, cli.json);
                 }
                 WorkspaceAction::Ls => {
@@ -209,13 +211,21 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::Agent { action } => {
             let mut client = connect(&socket_path).await?;
             match action {
-                AgentAction::Spawn { workspace, role, runtime, cwd, command } => {
+                AgentAction::Spawn {
+                    workspace,
+                    role,
+                    runtime,
+                    cwd,
+                    command,
+                } => {
                     let ws_id = parse_workspace_id(&workspace)?;
-                    let resp = client.call(Request::RegisterAgent {
-                        workspace_id: ws_id,
-                        role: role.clone().into(),
-                        runtime: runtime.into(),
-                    }).await?;
+                    let resp = client
+                        .call(Request::RegisterAgent {
+                            workspace_id: ws_id,
+                            role: role.clone().into(),
+                            runtime: runtime.into(),
+                        })
+                        .await?;
 
                     // If a command was given, open a Zellij pane with the _attach shim
                     if !command.is_empty() {
@@ -229,7 +239,8 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                                 agent_id.clone(),
                             ];
                             pane_cmd.extend(command);
-                            let pane_cmd_refs: Vec<&str> = pane_cmd.iter().map(|s| s.as_str()).collect();
+                            let pane_cmd_refs: Vec<&str> =
+                                pane_cmd.iter().map(|s| s.as_str()).collect();
                             info!(agent_id, "spawning agent pane via zellij");
                             rally_host_zellij::ZellijActions::new_pane(
                                 session.as_ref(),
@@ -243,7 +254,11 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 }
                 AgentAction::Ls { workspace } => {
                     let ws_id = workspace.as_deref().map(parse_workspace_id).transpose()?;
-                    let resp = client.call(Request::ListAgents { workspace_id: ws_id }).await?;
+                    let resp = client
+                        .call(Request::ListAgents {
+                            workspace_id: ws_id,
+                        })
+                        .await?;
                     print_response(&resp, cli.json);
                 }
                 AgentAction::Show { id } => {
@@ -260,8 +275,11 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                     let pid_path = socket_path.with_extension("pid");
                     let pid = std::fs::read_to_string(&pid_path).unwrap_or_default();
                     if cli.json {
-                        println!(r#"{{"status":"running","socket":"{}","pid":{}}}"#,
-                            socket_path.display(), pid.trim());
+                        println!(
+                            r#"{{"status":"running","socket":"{}","pid":{}}}"#,
+                            socket_path.display(),
+                            pid.trim()
+                        );
                     } else {
                         println!("rallyd: running (pid {})", pid.trim());
                         println!("socket: {}", socket_path.display());
@@ -297,12 +315,10 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                     if let Response::Agent(view) = resp {
                         let numeric_pane = view.pane_id
                             .ok_or_else(|| anyhow::anyhow!("agent has no pane attached yet — run rally agent spawn with a command first"))?;
-                        let session = view.pane_session.map(|s| {
-                            rally_host_zellij::SessionHandle {
-                                session_name: s,
-                                detected_via: rally_host_zellij::DetectedVia::EnvVar,
-                                owned: false,
-                            }
+                        let session = view.pane_session.map(|s| rally_host_zellij::SessionHandle {
+                            session_name: s,
+                            detected_via: rally_host_zellij::DetectedVia::EnvVar,
+                            owned: false,
                         });
                         let src = rally_capture::DumpScreenSource::new(session, numeric_pane);
                         let snap = src.snapshot()?;
@@ -324,14 +340,13 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                     let aid = parse_agent_id(&agent_id)?;
                     let resp = client.call(Request::GetAgent { id: aid }).await?;
                     if let Response::Agent(view) = resp {
-                        let numeric_pane = view.pane_id
+                        let numeric_pane = view
+                            .pane_id
                             .ok_or_else(|| anyhow::anyhow!("agent has no pane attached yet"))?;
-                        let session = view.pane_session.map(|s| {
-                            rally_host_zellij::SessionHandle {
-                                session_name: s,
-                                detected_via: rally_host_zellij::DetectedVia::EnvVar,
-                                owned: false,
-                            }
+                        let session = view.pane_session.map(|s| rally_host_zellij::SessionHandle {
+                            session_name: s,
+                            detected_via: rally_host_zellij::DetectedVia::EnvVar,
+                            owned: false,
                         });
                         let src = rally_capture::DumpScreenSource::new(session, numeric_pane);
                         if follow {
@@ -369,19 +384,23 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             // 1. Read pane correlation from Zellij env
             // 2. Report to daemon via BindPane
             // 3. exec the real command (replaces this process)
-            use rally_host_zellij::shim::{log_attach_correlation, log_attach_env_missing, PaneContext};
+            use rally_host_zellij::shim::{
+                log_attach_correlation, log_attach_env_missing, PaneContext,
+            };
 
             match PaneContext::from_env() {
                 Ok(ctx) => {
                     log_attach_correlation(&agent_id, &ctx);
                     let aid = parse_agent_id(&agent_id)?;
                     let mut client = connect(&socket_path).await?;
-                    let _ = client.call(Request::BindPane {
-                        agent_id: aid,
-                        session_name: ctx.session_name,
-                        tab_index: ctx.tab_index,
-                        pane_id: ctx.pane_id,
-                    }).await?;
+                    let _ = client
+                        .call(Request::BindPane {
+                            agent_id: aid,
+                            session_name: ctx.session_name,
+                            tab_index: ctx.tab_index,
+                            pane_id: ctx.pane_id,
+                        })
+                        .await?;
                 }
                 Err(e) => {
                     log_attach_env_missing(&e);
@@ -501,7 +520,10 @@ fn print_response(resp: &Response, json: bool) {
                 } else {
                     for a in list {
                         let pane = a.pane_session.as_deref().unwrap_or("-");
-                        println!("{} {} {:?} pane:{} (ws:{})", a.id, a.role, a.state, pane, a.workspace_id);
+                        println!(
+                            "{} {} {:?} pane:{} (ws:{})",
+                            a.id, a.role, a.state, pane, a.workspace_id
+                        );
                     }
                 }
             }
@@ -522,12 +544,16 @@ fn print_response(resp: &Response, json: bool) {
 }
 
 fn parse_workspace_id(s: &str) -> anyhow::Result<rally_proto::v1::WorkspaceId> {
-    let ulid: ulid::Ulid = s.parse().map_err(|e| anyhow::anyhow!("invalid workspace id '{s}': {e}"))?;
+    let ulid: ulid::Ulid = s
+        .parse()
+        .map_err(|e| anyhow::anyhow!("invalid workspace id '{s}': {e}"))?;
     Ok(rally_proto::v1::WorkspaceId::new(ulid))
 }
 
 fn parse_agent_id(s: &str) -> anyhow::Result<rally_proto::v1::AgentId> {
-    let ulid: ulid::Ulid = s.parse().map_err(|e| anyhow::anyhow!("invalid agent id '{s}': {e}"))?;
+    let ulid: ulid::Ulid = s
+        .parse()
+        .map_err(|e| anyhow::anyhow!("invalid agent id '{s}': {e}"))?;
     Ok(rally_proto::v1::AgentId::new(ulid))
 }
 
@@ -550,4 +576,3 @@ layout {
     }
 }
 "#;
-

@@ -16,11 +16,15 @@ impl PaneContext {
     /// `ZELLIJ_SESSION_NAME` and `ZELLIJ_PANE_ID` are injected by Zellij into
     /// every process running inside a pane.
     pub fn from_env() -> anyhow::Result<Self> {
-        let session_name = std::env::var("ZELLIJ_SESSION_NAME")
-            .map_err(|_| anyhow::anyhow!("ZELLIJ_SESSION_NAME not set — is this running inside zellij?"))?;
-        let pane_id_str = std::env::var("ZELLIJ_PANE_ID")
-            .map_err(|_| anyhow::anyhow!("ZELLIJ_PANE_ID not set — is this running inside zellij?"))?;
-        let pane_id: u32 = pane_id_str.trim().parse()
+        let session_name = std::env::var("ZELLIJ_SESSION_NAME").map_err(|_| {
+            anyhow::anyhow!("ZELLIJ_SESSION_NAME not set — is this running inside zellij?")
+        })?;
+        let pane_id_str = std::env::var("ZELLIJ_PANE_ID").map_err(|_| {
+            anyhow::anyhow!("ZELLIJ_PANE_ID not set — is this running inside zellij?")
+        })?;
+        let pane_id: u32 = pane_id_str
+            .trim()
+            .parse()
             .map_err(|e| anyhow::anyhow!("invalid ZELLIJ_PANE_ID '{pane_id_str}': {e}"))?;
 
         debug!(session = %session_name, pane_id, "captured pane context from env");
@@ -62,7 +66,10 @@ mod tests {
         let result = PaneContext::from_env();
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
-        assert!(msg.contains("ZELLIJ_SESSION_NAME"), "expected session name error, got: {msg}");
+        assert!(
+            msg.contains("ZELLIJ_SESSION_NAME"),
+            "expected session name error, got: {msg}"
+        );
     }
 
     #[test]
@@ -75,6 +82,9 @@ mod tests {
         std::env::remove_var("ZELLIJ_PANE_ID");
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
-        assert!(msg.contains("invalid ZELLIJ_PANE_ID"), "expected parse error, got: {msg}");
+        assert!(
+            msg.contains("invalid ZELLIJ_PANE_ID"),
+            "expected parse error, got: {msg}"
+        );
     }
 }

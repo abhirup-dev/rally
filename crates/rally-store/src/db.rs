@@ -64,7 +64,6 @@ CREATE TABLE IF NOT EXISTS aliases (
 );
 ";
 
-
 /// Thread-safe handle to the SQLite store.
 ///
 /// Wraps a single `Connection` behind a mutex — the daemon uses a dedicated
@@ -77,7 +76,11 @@ pub struct Store {
 impl Store {
     /// Execute a raw SQL query returning a single i64 — for integration tests only.
     pub fn raw_count(&self, sql: &str) -> i64 {
-        self.conn.lock().unwrap().query_row(sql, [], |r| r.get(0)).unwrap_or(0)
+        self.conn
+            .lock()
+            .unwrap()
+            .query_row(sql, [], |r| r.get(0))
+            .unwrap_or(0)
     }
 
     /// Execute a raw SQL query returning ordered i64 values — for integration tests only.
@@ -96,7 +99,11 @@ impl Store {
 
     /// Atomically save a workspace and its creation event in a single transaction.
     /// Fixes ral-ieu: prevents workspace existing in DB without a corresponding event.
-    pub fn save_workspace_and_event(&self, ws: &Workspace, event: &DomainEvent) -> Result<(), StoreError> {
+    pub fn save_workspace_and_event(
+        &self,
+        ws: &Workspace,
+        event: &DomainEvent,
+    ) -> Result<(), StoreError> {
         let conn = self.conn.lock().unwrap();
         let tx = conn.unchecked_transaction()?;
         insert_workspace(&tx, ws)?;
@@ -107,7 +114,11 @@ impl Store {
 
     /// Atomically save an agent and its registration event in a single transaction.
     /// Fixes ral-ieu: prevents agent existing in DB without a corresponding event.
-    pub fn save_agent_and_event(&self, agent: &Agent, event: &DomainEvent) -> Result<(), StoreError> {
+    pub fn save_agent_and_event(
+        &self,
+        agent: &Agent,
+        event: &DomainEvent,
+    ) -> Result<(), StoreError> {
         let conn = self.conn.lock().unwrap();
         let tx = conn.unchecked_transaction()?;
         insert_agent(&tx, agent)?;
@@ -154,7 +165,11 @@ fn configure(conn: &Connection) -> Result<(), StoreError> {
 
 fn migrate(conn: &Connection) -> Result<(), StoreError> {
     let version: u32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-    info!(current_version = version, target_version = SCHEMA_VERSION, "checking migrations");
+    info!(
+        current_version = version,
+        target_version = SCHEMA_VERSION,
+        "checking migrations"
+    );
 
     if version >= SCHEMA_VERSION {
         info!("schema up to date, no migration needed");
@@ -162,18 +177,30 @@ fn migrate(conn: &Connection) -> Result<(), StoreError> {
     }
 
     if version < 1 {
-        info!(migration_version = 1, "applying migration v1 (initial schema)");
+        info!(
+            migration_version = 1,
+            "applying migration v1 (initial schema)"
+        );
         conn.execute_batch(MIGRATION_V1).map_err(|e| {
             error!(version = 1, error = %e, "migration v1 failed");
-            StoreError::Migration { version: 1, reason: e.to_string() }
+            StoreError::Migration {
+                version: 1,
+                reason: e.to_string(),
+            }
         })?;
     }
 
     if version >= 1 && version < 2 {
-        info!(migration_version = 2, "applying migration v2 (canonical_key + aliases)");
+        info!(
+            migration_version = 2,
+            "applying migration v2 (canonical_key + aliases)"
+        );
         conn.execute_batch(MIGRATION_V2).map_err(|e| {
             error!(version = 2, error = %e, "migration v2 failed");
-            StoreError::Migration { version: 2, reason: e.to_string() }
+            StoreError::Migration {
+                version: 2,
+                reason: e.to_string(),
+            }
         })?;
     }
 

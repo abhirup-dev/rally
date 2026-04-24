@@ -10,9 +10,7 @@ impl AliasRepo for Store {
 
     fn resolve(&self, alias: &str) -> Result<Option<WorkspaceId>, Self::Error> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare_cached(
-            "SELECT workspace_id FROM aliases WHERE alias = ?1",
-        )?;
+        let mut stmt = conn.prepare_cached("SELECT workspace_id FROM aliases WHERE alias = ?1")?;
         let mut rows = stmt.query([alias])?;
         if let Some(row) = rows.next()? {
             let id_str: String = row.get(0)?;
@@ -40,7 +38,8 @@ impl AliasRepo for Store {
 
     fn list_aliases(&self) -> Result<Vec<(String, WorkspaceId)>, Self::Error> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare_cached("SELECT alias, workspace_id FROM aliases ORDER BY alias")?;
+        let mut stmt =
+            conn.prepare_cached("SELECT alias, workspace_id FROM aliases ORDER BY alias")?;
         let rows = stmt.query_map([], |r| {
             let alias: String = r.get(0)?;
             let id_str: String = r.get(1)?;

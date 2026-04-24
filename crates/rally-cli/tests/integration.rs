@@ -17,8 +17,11 @@ fn workspace_lifecycle_json() {
         .output()
         .expect("failed to run rally");
 
-    assert!(create_output.status.success(), "create failed: {}",
-        String::from_utf8_lossy(&create_output.stderr));
+    assert!(
+        create_output.status.success(),
+        "create failed: {}",
+        String::from_utf8_lossy(&create_output.stderr)
+    );
 
     let created: serde_json::Value =
         serde_json::from_slice(&create_output.stdout).expect("invalid JSON from create");
@@ -35,21 +38,37 @@ fn workspace_lifecycle_json() {
         .output()
         .expect("failed to run rally");
 
-    assert!(list_output.status.success(), "list failed: stdout={} stderr={}",
+    assert!(
+        list_output.status.success(),
+        "list failed: stdout={} stderr={}",
         String::from_utf8_lossy(&list_output.stdout),
-        String::from_utf8_lossy(&list_output.stderr));
+        String::from_utf8_lossy(&list_output.stderr)
+    );
     let listed: serde_json::Value =
         serde_json::from_slice(&list_output.stdout).expect("invalid JSON from list");
     assert_eq!(listed["kind"], "workspace_list");
 
     // Register an agent
     let spawn_output = rally_cmd(harness.socket_path())
-        .args(["--json", "agent", "spawn", "--workspace", ws_id, "--role", "impl", "--runtime", "claude-code"])
+        .args([
+            "--json",
+            "agent",
+            "spawn",
+            "--workspace",
+            ws_id,
+            "--role",
+            "impl",
+            "--runtime",
+            "claude-code",
+        ])
         .output()
         .expect("failed to run rally");
 
-    assert!(spawn_output.status.success(), "spawn failed: {}",
-        String::from_utf8_lossy(&spawn_output.stderr));
+    assert!(
+        spawn_output.status.success(),
+        "spawn failed: {}",
+        String::from_utf8_lossy(&spawn_output.stderr)
+    );
 
     let spawned: serde_json::Value =
         serde_json::from_slice(&spawn_output.stdout).expect("invalid JSON from spawn");

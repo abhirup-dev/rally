@@ -21,8 +21,8 @@ pub fn init() -> WorkerGuard {
     let file_appender = rolling::daily(&log_dir, "rally-daemon.log");
     let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
 
-    let env_filter = EnvFilter::try_from_env("RALLY_LOG")
-        .unwrap_or_else(|_| EnvFilter::new("rally=info"));
+    let env_filter =
+        EnvFilter::try_from_env("RALLY_LOG").unwrap_or_else(|_| EnvFilter::new("rally=info"));
 
     tracing_subscriber::registry()
         .with(env_filter)

@@ -52,9 +52,7 @@ impl WorkspaceRepo for Store {
         let mut stmt = conn.prepare_cached(
             "SELECT id, name, canonical_key, repo, created_at, archived FROM workspaces ORDER BY created_at",
         )?;
-        let rows = stmt.query_map([], |r| {
-            Ok(row_to_workspace(r))
-        })?;
+        let rows = stmt.query_map([], |r| Ok(row_to_workspace(r)))?;
         rows.map(|r| r?).collect()
     }
 
@@ -65,12 +63,12 @@ impl WorkspaceRepo for Store {
 }
 
 fn row_to_workspace(row: &rusqlite::Row<'_>) -> Result<Workspace, StoreError> {
-    let id_str: String        = row.get(0)?;
-    let name: String          = row.get(1)?;
+    let id_str: String = row.get(0)?;
+    let name: String = row.get(1)?;
     let canonical_key: String = row.get(2)?;
-    let repo: Option<String>  = row.get(3)?;
-    let at_ms: i64            = row.get(4)?;
-    let archived: i64         = row.get(5)?;
+    let repo: Option<String> = row.get(3)?;
+    let at_ms: i64 = row.get(4)?;
+    let archived: i64 = row.get(5)?;
 
     Ok(Workspace {
         id: str_to_ws_id(&id_str)?,

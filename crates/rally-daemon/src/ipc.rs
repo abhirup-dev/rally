@@ -31,10 +31,7 @@ pub async fn serve(listener: UnixListener, service: Arc<RallyService>) {
 
 /// Handle a single client connection. Reads newline-delimited JSON requests,
 /// dispatches to the service, writes newline-delimited JSON responses.
-async fn handle_connection(
-    stream: UnixStream,
-    service: Arc<RallyService>,
-) -> anyhow::Result<()> {
+async fn handle_connection(stream: UnixStream, service: Arc<RallyService>) -> anyhow::Result<()> {
     let (reader, mut writer) = stream.into_split();
     let mut lines = BufReader::new(reader).lines();
 
@@ -45,7 +42,9 @@ async fn handle_connection(
                 warn!(error = %e, "failed to parse request");
                 let err_resp = ResponseEnvelope {
                     request_id: compact_str::CompactString::from("unknown"),
-                    payload: Response::Error { message: format!("parse error: {e}") },
+                    payload: Response::Error {
+                        message: format!("parse error: {e}"),
+                    },
                 };
                 let mut out = serde_json::to_string(&err_resp)?;
                 out.push('\n');
@@ -81,7 +80,9 @@ async fn handle_connection(
 
         let payload = match response {
             Ok(r) => r,
-            Err(e) => Response::Error { message: e.to_string() },
+            Err(e) => Response::Error {
+                message: e.to_string(),
+            },
         };
 
         let resp_envelope = ResponseEnvelope {
@@ -96,10 +97,7 @@ async fn handle_connection(
     Ok(())
 }
 
-fn dispatch(
-    service: &RallyService,
-    request: Request,
-) -> anyhow::Result<Response> {
+fn dispatch(service: &RallyService, request: Request) -> anyhow::Result<Response> {
     match request {
         Request::CreateWorkspace { name, repo } => {
             let view = service.create_workspace(name, repo)?;
@@ -109,45 +107,54 @@ fn dispatch(
             let list = service.list_workspaces()?;
             Ok(Response::WorkspaceList { items: list })
         }
-        Request::GetWorkspace { id } => {
-            match service.get_workspace(id)? {
-                Some(ws) => Ok(Response::Workspace(ws)),
-                None => Ok(Response::Error { message: format!("workspace {id} not found") }),
-            }
-        }
-        Request::RegisterAgent { workspace_id, role, runtime } => {
+        Request::GetWorkspace { id } => match service.get_workspace(id)? {
+            Some(ws) => Ok(Response::Workspace(ws)),
+            None => Ok(Response::Error {
+                message: format!("workspace {id} not found"),
+            }),
+        },
+        Request::RegisterAgent {
+            workspace_id,
+            role,
+            runtime,
+        } => {
             let view = service.register_agent(workspace_id, role, runtime)?;
             Ok(Response::Agent(view))
         }
-        Request::GetAgent { id } => {
-            match service.get_agent(id)? {
-                Some(a) => Ok(Response::Agent(a)),
-                None => Ok(Response::Error { message: format!("agent {id} not found") }),
-            }
-        }
+        Request::GetAgent { id } => match service.get_agent(id)? {
+            Some(a) => Ok(Response::Agent(a)),
+            None => Ok(Response::Error {
+                message: format!("agent {id} not found"),
+            }),
+        },
         Request::ListAgents { workspace_id } => {
             let list = service.list_agents(workspace_id)?;
             Ok(Response::AgentList { items: list })
         }
-        Request::ArchiveWorkspace { .. } => {
-            Ok(Response::Error { message: "archive not yet implemented".into() })
-        }
-        Request::EmitAgentEvent { .. } => {
-            Ok(Response::Error { message: "emit not yet implemented".into() })
-        }
-        Request::ListInbox { .. } => {
-            Ok(Response::Error { message: "inbox not yet implemented".into() })
-        }
-        Request::AckInboxItem { .. } => {
-            Ok(Response::Error { message: "ack not yet implemented".into() })
-        }
-        Request::BindPane { agent_id, session_name, tab_index, pane_id } => {
+        Request::ArchiveWorkspace { .. } => Ok(Response::Error {
+            message: "archive not yet implemented".into(),
+        }),
+        Request::EmitAgentEvent { .. } => Ok(Response::Error {
+            message: "emit not yet implemented".into(),
+        }),
+        Request::ListInbox { .. } => Ok(Response::Error {
+            message: "inbox not yet implemented".into(),
+        }),
+        Request::AckInboxItem { .. } => Ok(Response::Error {
+            message: "ack not yet implemented".into(),
+        }),
+        Request::BindPane {
+            agent_id,
+            session_name,
+            tab_index,
+            pane_id,
+        } => {
             service.bind_pane(agent_id, session_name, tab_index, pane_id)?;
             Ok(Response::Ok)
         }
-        _ => {
-            Ok(Response::Error { message: "unknown method".into() })
-        }
+        _ => Ok(Response::Error {
+            message: "unknown method".into(),
+        }),
     }
 }
 

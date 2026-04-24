@@ -28,11 +28,21 @@ impl Clock for SystemClock {
 pub struct UlidIdGen;
 
 impl IdGen for UlidIdGen {
-    fn next_workspace_id(&self) -> WorkspaceId { WorkspaceId::new(Ulid::new()) }
-    fn next_agent_id(&self) -> AgentId { AgentId::new(Ulid::new()) }
-    fn next_pane_id(&self) -> rally_core::ids::PaneId { rally_core::ids::PaneId::new(Ulid::new()) }
-    fn next_inbox_item_id(&self) -> rally_core::ids::InboxItemId { rally_core::ids::InboxItemId::new(Ulid::new()) }
-    fn next_hook_id(&self) -> rally_core::ids::HookId { rally_core::ids::HookId::new(Ulid::new()) }
+    fn next_workspace_id(&self) -> WorkspaceId {
+        WorkspaceId::new(Ulid::new())
+    }
+    fn next_agent_id(&self) -> AgentId {
+        AgentId::new(Ulid::new())
+    }
+    fn next_pane_id(&self) -> rally_core::ids::PaneId {
+        rally_core::ids::PaneId::new(Ulid::new())
+    }
+    fn next_inbox_item_id(&self) -> rally_core::ids::InboxItemId {
+        rally_core::ids::InboxItemId::new(Ulid::new())
+    }
+    fn next_hook_id(&self) -> rally_core::ids::HookId {
+        rally_core::ids::HookId::new(Ulid::new())
+    }
 }
 
 pub struct RallyService {
@@ -71,7 +81,9 @@ impl RallyService {
         };
 
         let store = self.store.lock().unwrap();
-        store.save_workspace_and_event(&ws, &event).map_err(|e| anyhow::anyhow!("{e}"))?;
+        store
+            .save_workspace_and_event(&ws, &event)
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
         drop(store);
 
         self.event_bus.publish(event);
@@ -119,7 +131,9 @@ impl RallyService {
         };
 
         let store = self.store.lock().unwrap();
-        store.save_agent_and_event(&agent, &event).map_err(|e| anyhow::anyhow!("{e}"))?;
+        store
+            .save_agent_and_event(&agent, &event)
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
         drop(store);
 
         self.event_bus.publish(event);
@@ -150,7 +164,11 @@ impl RallyService {
         let agent = AgentRepo::get(&*store, agent_id)
             .map_err(|e| anyhow::anyhow!("{e}"))?
             .ok_or_else(|| anyhow::anyhow!("agent {agent_id} not found"))?;
-        let pane_ref = PaneRef { session_name: session_name.clone(), tab_index, pane_id };
+        let pane_ref = PaneRef {
+            session_name: session_name.clone(),
+            tab_index,
+            pane_id,
+        };
         let mut updated = agent;
         updated.pane_ref = Some(pane_ref.clone());
         let event = DomainEvent::AgentAttachedPane {
@@ -158,7 +176,9 @@ impl RallyService {
             pane_ref,
             at: self.clock.now(),
         };
-        store.save_agent_and_event(&updated, &event).map_err(|e| anyhow::anyhow!("{e}"))?;
+        store
+            .save_agent_and_event(&updated, &event)
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
         drop(store);
         self.event_bus.publish(event);
         info!(%agent_id, %session_name, pane_id, "pane bound to agent");

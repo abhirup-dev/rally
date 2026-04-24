@@ -65,21 +65,30 @@ impl StandaloneBootstrap {
             cmd.arg("--layout").arg(layout);
         }
 
-        info!(session = session_name, "exec'ing into standalone zellij session");
+        info!(
+            session = session_name,
+            "exec'ing into standalone zellij session"
+        );
         let err = cmd.exec(); // only returns on error
         Err(anyhow::anyhow!("failed to exec zellij: {err}"))
     }
 
     /// Kill a rally-owned Zellij session (`rally down`).
     pub fn down(session_name: &str) -> anyhow::Result<()> {
-        info!(session = session_name, "tearing down standalone zellij session");
+        info!(
+            session = session_name,
+            "tearing down standalone zellij session"
+        );
         let status = std::process::Command::new("zellij")
             .args(["delete-session", session_name, "--force"])
             .status()
             .map_err(|e| anyhow::anyhow!("failed to run zellij delete-session: {e}"))?;
 
         if !status.success() {
-            warn!(session = session_name, "zellij delete-session returned non-zero");
+            warn!(
+                session = session_name,
+                "zellij delete-session returned non-zero"
+            );
         }
         Ok(())
     }

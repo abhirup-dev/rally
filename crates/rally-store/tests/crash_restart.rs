@@ -31,7 +31,9 @@ fn workspace_survives_reopen() {
         let ws = make_workspace(&gen, "my-workspace");
         let id = ws.id;
         WorkspaceRepo::save(&mut store, &ws).unwrap();
-        let loaded = WorkspaceRepo::get(&store, id).unwrap().expect("should exist");
+        let loaded = WorkspaceRepo::get(&store, id)
+            .unwrap()
+            .expect("should exist");
         assert_eq!(loaded.name.as_str(), "my-workspace");
         id
     };
@@ -67,7 +69,9 @@ fn agent_survives_reopen() {
         );
         AgentRepo::save(&mut store, &agent).unwrap();
 
-        agent.apply(&rally_core::agent::AgentTrigger::Started).unwrap();
+        agent
+            .apply(&rally_core::agent::AgentTrigger::Started)
+            .unwrap();
         AgentRepo::save(&mut store, &agent).unwrap();
     }
 

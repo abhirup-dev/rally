@@ -7,8 +7,8 @@ use rally_core::ports::AgentRepo;
 use rusqlite::Connection;
 
 use crate::convert::{
-    agent_id_to_str, pane_ref_from_row, state_to_str, str_to_agent_id, str_to_state,
-    str_to_ws_id, ws_id_to_str,
+    agent_id_to_str, pane_ref_from_row, state_to_str, str_to_agent_id, str_to_state, str_to_ws_id,
+    ws_id_to_str,
 };
 use crate::db::Store;
 use crate::StoreError;
@@ -84,20 +84,19 @@ impl AgentRepo for Store {
 }
 
 fn row_to_agent(row: &rusqlite::Row<'_>) -> Result<Agent, StoreError> {
-    let id_str: String        = row.get(0)?;
-    let ws_str: String        = row.get(1)?;
-    let role: String          = row.get(2)?;
-    let runtime: String       = row.get(3)?;
-    let state_str: String     = row.get(4)?;
+    let id_str: String = row.get(0)?;
+    let ws_str: String = row.get(1)?;
+    let role: String = row.get(2)?;
+    let runtime: String = row.get(3)?;
+    let state_str: String = row.get(4)?;
     let pane_session: Option<String> = row.get(5)?;
     let pane_tab: Option<u32> = row.get(6)?;
     let pane_id_col: Option<u32> = row.get(7)?;
-    let restart_count: u32    = row.get(8)?;
+    let restart_count: u32 = row.get(8)?;
     let metadata_json: String = row.get(9)?;
-    let at_ms: i64            = row.get(10)?;
+    let at_ms: i64 = row.get(10)?;
 
-    let metadata: HashMap<CompactString, serde_json::Value> =
-        serde_json::from_str(&metadata_json)?;
+    let metadata: HashMap<CompactString, serde_json::Value> = serde_json::from_str(&metadata_json)?;
 
     Ok(Agent {
         id: str_to_agent_id(&id_str)?,

@@ -28,9 +28,8 @@ pub fn hook_id_to_str(id: HookId) -> String {
 }
 
 fn parse_ulid(s: &str) -> Result<Ulid, StoreError> {
-    s.parse::<Ulid>().map_err(|e| {
-        StoreError::NotFound(format!("invalid ulid '{s}': {e}"))
-    })
+    s.parse::<Ulid>()
+        .map_err(|e| StoreError::NotFound(format!("invalid ulid '{s}': {e}")))
 }
 
 pub fn str_to_ws_id(s: &str) -> Result<WorkspaceId, StoreError> {
@@ -55,27 +54,27 @@ pub fn str_to_hook_id(s: &str) -> Result<HookId, StoreError> {
 
 pub fn state_to_str(s: AgentState) -> &'static str {
     match s {
-        AgentState::Initializing     => "initializing",
-        AgentState::Running          => "running",
-        AgentState::Idle             => "idle",
-        AgentState::WaitingForInput  => "waiting_for_input",
+        AgentState::Initializing => "initializing",
+        AgentState::Running => "running",
+        AgentState::Idle => "idle",
+        AgentState::WaitingForInput => "waiting_for_input",
         AgentState::AttentionRequired => "attention_required",
-        AgentState::Completed        => "completed",
-        AgentState::Failed           => "failed",
-        AgentState::Stopped          => "stopped",
+        AgentState::Completed => "completed",
+        AgentState::Failed => "failed",
+        AgentState::Stopped => "stopped",
     }
 }
 
 pub fn str_to_state(s: &str) -> Result<AgentState, StoreError> {
     match s {
-        "initializing"      => Ok(AgentState::Initializing),
-        "running"           => Ok(AgentState::Running),
-        "idle"              => Ok(AgentState::Idle),
+        "initializing" => Ok(AgentState::Initializing),
+        "running" => Ok(AgentState::Running),
+        "idle" => Ok(AgentState::Idle),
         "waiting_for_input" => Ok(AgentState::WaitingForInput),
-        "attention_required"=> Ok(AgentState::AttentionRequired),
-        "completed"         => Ok(AgentState::Completed),
-        "failed"            => Ok(AgentState::Failed),
-        "stopped"           => Ok(AgentState::Stopped),
+        "attention_required" => Ok(AgentState::AttentionRequired),
+        "completed" => Ok(AgentState::Completed),
+        "failed" => Ok(AgentState::Failed),
+        "stopped" => Ok(AgentState::Stopped),
         other => Err(StoreError::NotFound(format!("unknown state: {other}"))),
     }
 }
@@ -108,7 +107,13 @@ pub fn event_to_stored(e: &DomainEvent) -> StoredEvent {
             payload: json!({ "id": ws_id_to_str(*id) }),
             at_ms: at.as_millis(),
         },
-        DomainEvent::AgentRegistered { id, workspace, role, runtime, at } => StoredEvent {
+        DomainEvent::AgentRegistered {
+            id,
+            workspace,
+            role,
+            runtime,
+            at,
+        } => StoredEvent {
             workspace_id: ws_id_to_str(*workspace),
             kind: "AgentRegistered".into(),
             payload: json!({ "id": agent_id_to_str(*id), "workspace": ws_id_to_str(*workspace),
@@ -123,7 +128,13 @@ pub fn event_to_stored(e: &DomainEvent) -> StoredEvent {
                              "tab": pane_ref.tab_index, "pane": pane_ref.pane_id }),
             at_ms: at.as_millis(),
         },
-        DomainEvent::AgentStateChanged { id, from, to, cause, at } => StoredEvent {
+        DomainEvent::AgentStateChanged {
+            id,
+            from,
+            to,
+            cause,
+            at,
+        } => StoredEvent {
             workspace_id: "".into(),
             kind: "AgentStateChanged".into(),
             payload: json!({ "id": agent_id_to_str(*id),
@@ -137,14 +148,24 @@ pub fn event_to_stored(e: &DomainEvent) -> StoredEvent {
             payload: json!({ "id": agent_id_to_str(*id), "key": key.as_str(), "value": value }),
             at_ms: at.as_millis(),
         },
-        DomainEvent::CaptureSnapshot { agent, bytes_hash, at } => StoredEvent {
+        DomainEvent::CaptureSnapshot {
+            agent,
+            bytes_hash,
+            at,
+        } => StoredEvent {
             workspace_id: "".into(),
             kind: "CaptureSnapshot".into(),
             payload: json!({ "agent": agent_id_to_str(*agent),
                              "hash": hex::encode_bytes_hash(bytes_hash) }),
             at_ms: at.as_millis(),
         },
-        DomainEvent::InboxItemRaised { id, agent, urgency, kind, at } => StoredEvent {
+        DomainEvent::InboxItemRaised {
+            id,
+            agent,
+            urgency,
+            kind,
+            at,
+        } => StoredEvent {
             workspace_id: "".into(),
             kind: "InboxItemRaised".into(),
             payload: json!({ "id": inbox_id_to_str(*id),
@@ -159,7 +180,11 @@ pub fn event_to_stored(e: &DomainEvent) -> StoredEvent {
             payload: json!({ "id": inbox_id_to_str(*id) }),
             at_ms: at.as_millis(),
         },
-        DomainEvent::HookFired { registration, event, at } => StoredEvent {
+        DomainEvent::HookFired {
+            registration,
+            event,
+            at,
+        } => StoredEvent {
             workspace_id: "".into(),
             kind: "HookFired".into(),
             payload: json!({ "registration": hook_id_to_str(*registration),
@@ -178,9 +203,9 @@ pub fn event_to_stored(e: &DomainEvent) -> StoredEvent {
 
 fn urgency_to_str(u: Urgency) -> &'static str {
     match u {
-        Urgency::Low    => "low",
+        Urgency::Low => "low",
         Urgency::Medium => "medium",
-        Urgency::High   => "high",
+        Urgency::High => "high",
     }
 }
 

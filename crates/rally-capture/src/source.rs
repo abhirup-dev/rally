@@ -37,10 +37,8 @@ impl DumpScreenSource {
     /// Poll the pane screen and push new content into the ring buffer.
     #[instrument(skip(self), fields(pane_id = self.pane_id))]
     pub fn poll(&self) -> anyhow::Result<String> {
-        let text = rally_host_zellij::ZellijActions::dump_screen(
-            self.session.as_ref(),
-            self.pane_id,
-        )?;
+        let text =
+            rally_host_zellij::ZellijActions::dump_screen(self.session.as_ref(), self.pane_id)?;
         debug!(pane_id = self.pane_id, bytes = text.len(), "polled screen");
         let mut ring = self.ring.lock().unwrap();
         ring.push_screen(&text);
@@ -72,7 +70,8 @@ impl DumpScreenSource {
 impl CaptureSource for DumpScreenSource {
     fn snapshot(&self) -> anyhow::Result<CaptureSnapshot> {
         let text = self.poll()?;
-        let session_name = self.session
+        let session_name = self
+            .session
             .as_ref()
             .map(|h| h.session_name.to_string())
             .unwrap_or_default();

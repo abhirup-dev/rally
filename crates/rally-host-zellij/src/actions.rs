@@ -60,12 +60,23 @@ impl ZellijActions {
             cmd.arg("--session").arg(h.session_name.as_str());
         }
         let pane_id_str = pane_id.to_string();
-        cmd.args(["action", "dump-screen", "--pane-id", &pane_id_str, "/dev/stdout"]);
+        cmd.args([
+            "action",
+            "dump-screen",
+            "--pane-id",
+            &pane_id_str,
+            "/dev/stdout",
+        ]);
         debug!(pane_id, "running zellij action dump-screen --pane-id");
-        let output = cmd.output().map_err(|e| anyhow::anyhow!("zellij dump-screen failed: {e}"))?;
+        let output = cmd
+            .output()
+            .map_err(|e| anyhow::anyhow!("zellij dump-screen failed: {e}"))?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!("zellij action dump-screen exited with {}: {stderr}", output.status);
+            anyhow::bail!(
+                "zellij action dump-screen exited with {}: {stderr}",
+                output.status
+            );
         }
         Ok(String::from_utf8_lossy(&output.stdout).into_owned())
     }
@@ -79,7 +90,9 @@ impl ZellijActions {
         }
         cmd.args(["action", "rename-pane", name]);
         debug!(name, "running zellij action rename-pane");
-        let status = cmd.status().map_err(|e| anyhow::anyhow!("zellij rename-pane failed: {e}"))?;
+        let status = cmd
+            .status()
+            .map_err(|e| anyhow::anyhow!("zellij rename-pane failed: {e}"))?;
         if !status.success() {
             anyhow::bail!("zellij action rename-pane exited with {status}");
         }
@@ -96,7 +109,9 @@ impl ZellijActions {
         let pane_id_str = pane_id.to_string();
         cmd.args(["action", "focus-pane-with-id", &pane_id_str]);
         debug!(pane_id, "running zellij action focus-pane-with-id");
-        let status = cmd.status().map_err(|e| anyhow::anyhow!("zellij focus-pane failed: {e}"))?;
+        let status = cmd
+            .status()
+            .map_err(|e| anyhow::anyhow!("zellij focus-pane failed: {e}"))?;
         if !status.success() {
             anyhow::bail!("zellij action focus-pane-with-id exited with {status}");
         }

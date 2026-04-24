@@ -93,7 +93,7 @@ pub fn transition(
             return Err(InvalidTransition {
                 state,
                 trigger: trigger.clone(),
-            })
+            });
         }
     };
 

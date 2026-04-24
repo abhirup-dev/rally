@@ -44,7 +44,10 @@ impl DaemonHarness {
             std::thread::sleep(std::time::Duration::from_millis(100));
         }
 
-        panic!("rallyd did not start within 5 seconds (socket: {})", socket_path.display());
+        panic!(
+            "rallyd did not start within 5 seconds (socket: {})",
+            socket_path.display()
+        );
     }
 
     pub fn socket_path(&self) -> &Path {
@@ -53,8 +56,7 @@ impl DaemonHarness {
 
     /// Find the rallyd binary in the cargo target directory.
     pub fn find_rallyd() -> PathBuf {
-        let mut path = std::env::current_exe()
-            .expect("cannot determine test binary path");
+        let mut path = std::env::current_exe().expect("cannot determine test binary path");
         // test binary is in target/debug/deps/<name>
         // rallyd is in target/debug/rallyd
         path.pop(); // remove binary name
@@ -62,7 +64,11 @@ impl DaemonHarness {
             path.pop(); // remove "deps"
         }
         path.push("rallyd");
-        assert!(path.exists(), "rallyd not found at {}. Build it first: cargo build -p rally-daemon", path.display());
+        assert!(
+            path.exists(),
+            "rallyd not found at {}. Build it first: cargo build -p rally-daemon",
+            path.display()
+        );
         path
     }
 }

@@ -15,12 +15,7 @@ pub struct Workspace {
 }
 
 impl Workspace {
-    pub fn new(
-        id: WorkspaceId,
-        name: CompactString,
-        repo: Option<PathBuf>,
-        at: Timestamp,
-    ) -> Self {
+    pub fn new(id: WorkspaceId, name: CompactString, repo: Option<PathBuf>, at: Timestamp) -> Self {
         let canonical_key = generate_canonical_key(&name, repo.as_deref(), at);
         Self {
             id,
@@ -65,7 +60,13 @@ pub fn generate_canonical_key(
 
 fn sanitize_for_key(s: &str) -> String {
     s.chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '-' { c.to_ascii_lowercase() } else { '-' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' {
+                c.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
         .collect::<String>()
         .trim_matches('-')
         .to_string()

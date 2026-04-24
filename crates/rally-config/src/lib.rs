@@ -242,7 +242,9 @@ impl RallyConfig {
                     debug!(value = mb, "env override: RALLY_CAPTURE_RING_BUFFER_MB");
                     self.capture.ring_buffer_mb = mb;
                 }
-                Err(_) => warn!(value = %v, var = "RALLY_CAPTURE_RING_BUFFER_MB", "invalid value, ignoring"),
+                Err(_) => {
+                    warn!(value = %v, var = "RALLY_CAPTURE_RING_BUFFER_MB", "invalid value, ignoring")
+                }
             }
         }
     }
