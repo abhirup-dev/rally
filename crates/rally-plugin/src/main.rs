@@ -4,10 +4,11 @@ use std::collections::BTreeMap;
 
 use serde::Deserialize;
 use widgets::{
-    AgentInfo, AnsiBuf, InboxItemInfo, InboxSummary, RenderCtx, SidebarWidget, StatusBar,
-    WorkspaceInfo, WorkspaceTree,
+    render_inbox_lines, render_status_lines, render_workspace_lines, AgentInfo, InboxItemInfo,
+    RenderCtx, WorkspaceInfo,
 };
 use zellij_tile::prelude::*;
+use zellij_widgets::prelude::{Line, Modifier, Paragraph, PluginPane, Span, Style, Text};
 
 mod widgets;
 
@@ -24,10 +25,6 @@ struct RallyPlugin {
     selected_agent_id: Option<String>,
     status_message: Option<String>,
     ui_version: u64,
-    render_cache: String,
-    render_cache_state_version: u64,
-    render_cache_ui_version: u64,
-    render_cache_cols: usize,
     last_error: Option<String>,
 }
 
@@ -90,41 +87,76 @@ impl ZellijPlugin for RallyPlugin {
         }
     }
 
-    fn render(&mut self, _rows: usize, cols: usize) {
-        let w = cols.min(40);
-        println!("\x1b[1m Rally \x1b[0m");
-        println!("{}", "─".repeat(w));
+    fn render(&mut self, rows: usize, cols: usize) {
+        let rows = rows as u16;
+        let cols = cols.min(40) as u16;
+        let lines = self.build_lines(cols as usize);
+        let text = Text::from(lines);
+        let area = zellij_widgets::prelude::Geometry::new(rows, cols);
 
-        if let Some(ref err) = self.last_error {
-            println!("\x1b[31m⚠ {}\x1b[0m", truncate(err, w.saturating_sub(2)));
-            return;
-        }
-
-        if self.workspaces.is_empty() {
-            println!("\x1b[2mGrant permission, then");
-            println!("loading…\x1b[0m");
-            return;
-        }
-
-        if self.show_help {
-            render_help(w);
-            return;
-        }
-
-        if self.render_cache_state_version != self.state_version
-            || self.render_cache_ui_version != self.ui_version
-            || self.render_cache_cols != w
-        {
-            self.render_cache = self.render_body(w);
-            self.render_cache_state_version = self.state_version;
-            self.render_cache_ui_version = self.ui_version;
-            self.render_cache_cols = w;
-        }
-        print!("{}", self.render_cache);
+        let mut pane = PluginPane::new(std::io::stdout(), rows, cols);
+        let _ = pane.draw(|frame| {
+            frame.render_widget(Paragraph::new(text), area);
+        });
     }
 }
 
 impl RallyPlugin {
+    fn build_lines(&self, cols: usize) -> Vec<Line<'static>> {
+        let mut lines = Vec::new();
+
+        // Header
+        lines.push(Line::from(Span::styled(
+            " Rally ",
+            Style::default().add_modifier(Modifier::BOLD),
+        )));
+        lines.push(Line::from("─".repeat(cols)));
+
+        // Error state
+        if let Some(ref err) = self.last_error {
+            lines.push(Line::from(Span::styled(
+                format!("⚠ {}", truncate(err, cols.saturating_sub(2))),
+                Style::default().fg(zellij_widgets::prelude::Color::Red),
+            )));
+            return lines;
+        }
+
+        // Loading state
+        if self.workspaces.is_empty() {
+            lines.push(Line::from(Span::styled(
+                "Grant permission, then",
+                Style::default().add_modifier(Modifier::DIM),
+            )));
+            lines.push(Line::from(Span::styled(
+                "loading…",
+                Style::default().add_modifier(Modifier::DIM),
+            )));
+            return lines;
+        }
+
+        // Help screen
+        if self.show_help {
+            lines.extend(help_lines(cols));
+            return lines;
+        }
+
+        // Normal render
+        let ctx = RenderCtx {
+            cols,
+            workspaces: &self.workspaces,
+            agents: &self.agents,
+            inbox_items: &self.inbox_items,
+            selected_agent_id: self.selected_agent_id.as_deref(),
+            filter: (!self.filter.is_empty()).then_some(self.filter.as_str()),
+            status_message: self.status_message.as_deref(),
+        };
+        lines.extend(render_workspace_lines(&ctx));
+        lines.extend(render_inbox_lines(&ctx, self.show_inbox_detail));
+        lines.extend(render_status_lines(&ctx));
+
+        lines
+    }
+
     fn apply_snapshot_bytes(&mut self, bytes: &[u8]) -> bool {
         match serde_json::from_slice::<StateSnapshotResponse>(bytes) {
             Ok(snapshot) => self.apply_snapshot(snapshot),
@@ -155,21 +187,20 @@ impl RallyPlugin {
         run_command(&["rally", "--json", "_plugin-state"], ctx);
     }
 
-    fn render_body(&self, cols: usize) -> String {
-        let ctx = RenderCtx {
-            cols,
-            workspaces: &self.workspaces,
-            agents: &self.agents,
-            inbox_items: &self.inbox_items,
-            selected_agent_id: self.selected_agent_id.as_deref(),
-            filter: (!self.filter.is_empty()).then_some(self.filter.as_str()),
-            status_message: self.status_message.as_deref(),
-        };
-        let mut buf = AnsiBuf::with_capacity(8 * 1024);
-        WorkspaceTree.render(&ctx, &mut buf);
-        InboxSummary::new(self.show_inbox_detail).render(&ctx, &mut buf);
-        StatusBar.render(&ctx, &mut buf);
-        buf.into_string()
+    fn render_to_string(&self, rows: usize, cols: usize) -> String {
+        let cols = cols.min(40);
+        let rows = rows as u16;
+        let cols_u16 = cols as u16;
+        let lines = self.build_lines(cols);
+        let text = Text::from(lines);
+        let area = zellij_widgets::prelude::Geometry::new(rows, cols_u16);
+
+        let mut buf = Vec::new();
+        let mut pane = PluginPane::new(&mut buf, rows, cols_u16);
+        let _ = pane.draw(|frame| {
+            frame.render_widget(Paragraph::new(text), area);
+        });
+        String::from_utf8_lossy(&buf).into_owned()
     }
 
     fn handle_key(&mut self, key: BareKey) -> bool {
@@ -321,17 +352,22 @@ fn truncate(s: &str, max: usize) -> &str {
     }
 }
 
-fn render_help(width: usize) {
-    println!("\x1b[1mKeys\x1b[0m");
-    println!("{}", "─".repeat(width));
-    println!("j/k      move selection");
-    println!("f        focus selected agent");
-    println!("a        ack selected item");
-    println!("r        restart selected agent");
-    println!("s        spawn wizard");
-    println!("/        filter agents");
-    println!("i        inbox detail");
-    println!("Esc      close mode");
+fn help_lines(width: usize) -> Vec<Line<'static>> {
+    let _ = width;
+    vec![
+        Line::from(Span::styled(
+            "Keys",
+            Style::default().add_modifier(Modifier::BOLD),
+        )),
+        Line::from("j/k      move selection"),
+        Line::from("f        focus selected agent"),
+        Line::from("a        ack selected item"),
+        Line::from("r        restart selected agent"),
+        Line::from("s        spawn wizard"),
+        Line::from("/        filter agents"),
+        Line::from("i        inbox detail"),
+        Line::from("Esc      close mode"),
+    ]
 }
 
 #[cfg(test)]
@@ -431,7 +467,7 @@ mod tests {
             }"#,
         );
 
-        let body = plugin.render_body(40);
+        let body = plugin.render_to_string(50, 40);
 
         assert!(body.contains("api"));
         assert!(body.contains("impl"));
@@ -447,7 +483,7 @@ mod tests {
             for agent_count in [0usize, 1, 5, 50] {
                 for inbox_count in [0usize, 3, 20] {
                     let plugin = snapshot_plugin(agent_count, inbox_count);
-                    let body = plugin.render_body(72);
+                    let body = plugin.render_to_string(80, 72);
                     assert_file_snapshot(
                         &format!("sidebar_{agent_count}_agents_{inbox_count}_inbox"),
                         &body,

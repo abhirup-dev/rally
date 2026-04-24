@@ -1,67 +1,59 @@
-use super::{AnsiBuf, RenderCtx, SidebarWidget};
+use super::{truncate_chars, RenderCtx};
+use zellij_widgets::prelude::*;
 
-#[derive(Default)]
-pub struct StatusBar;
+pub fn render_status_lines(ctx: &RenderCtx<'_>) -> Vec<Line<'static>> {
+    let width = ctx.cols.max(1);
+    let total = ctx.agents.len();
+    let running = ctx.agents.iter().filter(|a| a.state == "running").count();
+    let attention = ctx
+        .agents
+        .iter()
+        .filter(|a| a.state == "attention_required" || a.state == "waiting_for_input")
+        .count();
 
-impl SidebarWidget for StatusBar {
-    fn id(&self) -> &'static str {
-        "status_bar"
+    let mut lines = Vec::new();
+    lines.push(Line::from("─".repeat(width)));
+
+    if let Some(message) = ctx.status_message {
+        lines.push(Line::from(Span::styled(
+            truncate_chars(message, width),
+            Style::default().fg(Color::Yellow),
+        )));
+    }
+    if let Some(filter) = ctx.filter {
+        lines.push(Line::from(format!(
+            "/{}",
+            truncate_chars(filter, width.saturating_sub(1))
+        )));
     }
 
-    fn render(&self, ctx: &RenderCtx<'_>, buf: &mut AnsiBuf) {
-        let width = ctx.cols.max(1);
-        let total = ctx.agents.len();
-        let running = ctx
-            .agents
-            .iter()
-            .filter(|agent| agent.state == "running")
-            .count();
-        let attention = ctx
-            .agents
-            .iter()
-            .filter(|agent| {
-                agent.state == "attention_required" || agent.state == "waiting_for_input"
-            })
-            .count();
-
-        buf.line("─".repeat(width));
-        if let Some(message) = ctx.status_message {
-            buf.line(format!("\x1b[33m{}\x1b[0m", truncate_chars(message, width)));
-        }
-        if let Some(filter) = ctx.filter {
-            buf.line(format!(
-                "/{}",
-                truncate_chars(filter, width.saturating_sub(1))
-            ));
-        }
-        buf.line(summary_line(total, running, attention));
-        buf.line(truncate_chars(
-            "\x1b[2m[N]ext [j/k]move [f]ocus [a]ck [s]pawn [/]filter [?]help\x1b[0m",
+    lines.push(summary_line(total, running, attention));
+    lines.push(Line::from(Span::styled(
+        truncate_chars(
+            "[N]ext [j/k]move [f]ocus [a]ck [s]pawn [/]filter [?]help",
             width,
+        ),
+        Style::default().add_modifier(Modifier::DIM),
+    )));
+
+    lines
+}
+
+fn summary_line(total: usize, running: usize, attention: usize) -> Line<'static> {
+    let mut spans = vec![Span::raw(format!("{total} agents"))];
+    if running > 0 {
+        spans.push(Span::styled(
+            format!(" {running}●"),
+            Style::default().fg(Color::Green),
         ));
     }
-}
-
-fn summary_line(total: usize, running: usize, attention: usize) -> String {
-    let mut line = format!("{total} agents");
-    if running > 0 {
-        line.push_str(&format!(" \x1b[32m{running}●\x1b[0m"));
-    }
     if attention > 0 {
-        line.push_str(&format!(" \x1b[33m{attention}⚠\x1b[0m"));
+        spans.push(Span::styled(
+            format!(" {attention}⚠"),
+            Style::default().fg(Color::Yellow),
+        ));
     }
-    line
-}
-
-fn truncate_chars(value: &str, max: usize) -> String {
-    if value.chars().count() <= max {
-        return value.to_string();
-    }
-
-    let keep = max.saturating_sub(1);
-    let mut truncated: String = value.chars().take(keep).collect();
-    truncated.push('…');
-    truncated
+    Line::from(spans)
 }
 
 #[cfg(test)]
@@ -81,6 +73,19 @@ mod tests {
         }
     }
 
+    fn lines_text(lines: &[Line<'_>]) -> String {
+        lines
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|s| s.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     #[test]
     fn renders_summary_counts_and_hints() {
         let agents = vec![
@@ -97,13 +102,13 @@ mod tests {
             filter: None,
             status_message: None,
         };
-        let mut buf = AnsiBuf::default();
 
-        StatusBar.render(&ctx, &mut buf);
+        let lines = render_status_lines(&ctx);
+        let text = lines_text(&lines);
 
-        assert!(buf.as_str().contains("3 agents"));
-        assert!(buf.as_str().contains("1●"));
-        assert!(buf.as_str().contains("1⚠"));
-        assert!(buf.as_str().contains("[N]ext"));
+        assert!(text.contains("3 agents"));
+        assert!(text.contains("1●"));
+        assert!(text.contains("1⚠"));
+        assert!(text.contains("[N]ext"));
     }
 }

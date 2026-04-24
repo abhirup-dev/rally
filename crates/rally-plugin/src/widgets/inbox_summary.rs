@@ -1,42 +1,35 @@
-use super::{AgentInfo, AnsiBuf, InboxItemInfo, RenderCtx, SidebarWidget};
+use super::{truncate_chars, AgentInfo, InboxItemInfo, RenderCtx};
+use zellij_widgets::prelude::*;
 
-#[derive(Default)]
-pub struct InboxSummary {
-    expanded: bool,
-}
-
-impl InboxSummary {
-    pub fn new(expanded: bool) -> Self {
-        Self { expanded }
-    }
-}
-
-impl SidebarWidget for InboxSummary {
-    fn id(&self) -> &'static str {
-        "inbox_summary"
+pub fn render_inbox_lines(ctx: &RenderCtx<'_>, expanded: bool) -> Vec<Line<'static>> {
+    let signals = InboxSignals::from_ctx(ctx);
+    if signals.total == 0 {
+        return Vec::new();
     }
 
-    fn render(&self, ctx: &RenderCtx<'_>, buf: &mut AnsiBuf) {
-        let signals = InboxSignals::from_ctx(ctx);
-        if signals.total == 0 {
-            return;
-        }
+    let mut lines = Vec::new();
 
-        buf.line(format!(
-            "\x1b[1mInbox\x1b[0m {}{}",
-            urgency_badge("high", signals.high),
-            urgency_badge("medium", signals.medium)
-        ));
+    let mut header_spans = vec![Span::styled(
+        "Inbox",
+        Style::default().add_modifier(Modifier::BOLD),
+    )];
+    header_spans.push(Span::raw(urgency_badge("high", signals.high)));
+    header_spans.push(Span::raw(urgency_badge("medium", signals.medium)));
+    lines.push(Line::from(header_spans));
 
-        if self.expanded {
-            render_detail(ctx, buf);
-        } else {
-            buf.line(format!(
-                "  {} open · \x1b[2mpress i for detail\x1b[0m",
-                signals.total
-            ));
-        }
+    if expanded {
+        render_detail(ctx, &mut lines);
+    } else {
+        lines.push(Line::from(vec![
+            Span::raw(format!("  {} open · ", signals.total)),
+            Span::styled(
+                "press i for detail",
+                Style::default().add_modifier(Modifier::DIM),
+            ),
+        ]));
     }
+
+    lines
 }
 
 struct InboxSignals {
@@ -85,21 +78,21 @@ impl InboxSignals {
     }
 }
 
-fn render_detail(ctx: &RenderCtx<'_>, buf: &mut AnsiBuf) {
+fn render_detail(ctx: &RenderCtx<'_>, lines: &mut Vec<Line<'static>>) {
     if ctx.inbox_items.iter().any(|item| !item.acked) {
         for item in ctx.inbox_items.iter().filter(|item| !item.acked).take(5) {
             let agent = item
                 .agent_id
                 .as_deref()
-                .and_then(|id| ctx.agents.iter().find(|agent| agent.id == id));
-            let label = agent.map(|agent| agent.role.as_str()).unwrap_or("system");
+                .and_then(|id| ctx.agents.iter().find(|a| a.id == id));
+            let label = agent.map(|a| a.role.as_str()).unwrap_or("system");
             let message = item.message.as_deref().unwrap_or("attention required");
-            buf.line(format!(
+            lines.push(Line::from(format!(
                 "  {} {:<8} {}",
                 urgency_icon(&item.urgency),
                 truncate_chars(label, 8),
                 truncate_chars(message, ctx.cols.saturating_sub(13).max(1))
-            ));
+            )));
         }
         return;
     }
@@ -107,7 +100,7 @@ fn render_detail(ctx: &RenderCtx<'_>, buf: &mut AnsiBuf) {
     for agent in ctx
         .agents
         .iter()
-        .filter(|agent| agent.state == "attention_required" || agent.state == "waiting_for_input")
+        .filter(|a| a.state == "attention_required" || a.state == "waiting_for_input")
         .take(5)
     {
         let icon = if agent.state == "attention_required" {
@@ -115,12 +108,12 @@ fn render_detail(ctx: &RenderCtx<'_>, buf: &mut AnsiBuf) {
         } else {
             "⚠"
         };
-        buf.line(format!(
+        lines.push(Line::from(format!(
             "  {} {:<8} {}",
             icon,
             truncate_chars(&agent.role, 8),
             truncate_chars(&agent.state, ctx.cols.saturating_sub(13).max(1))
-        ));
+        )));
     }
 }
 
@@ -140,21 +133,10 @@ fn urgency_icon(urgency: &str) -> &'static str {
     }
 }
 
-fn truncate_chars(value: &str, max: usize) -> String {
-    if value.chars().count() <= max {
-        return value.to_string();
-    }
-
-    let keep = max.saturating_sub(1);
-    let mut truncated: String = value.chars().take(keep).collect();
-    truncated.push('…');
-    truncated
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::widgets::{AgentInfo, WorkspaceInfo};
+    use crate::widgets::AgentInfo;
 
     fn agent(id: &str, role: &str, state: &str) -> AgentInfo {
         AgentInfo {
@@ -179,6 +161,19 @@ mod tests {
         }
     }
 
+    fn lines_text(lines: &[Line<'_>]) -> String {
+        lines
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|s| s.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     #[test]
     fn renders_summary_from_real_inbox_items() {
         let agents = vec![agent("a1", "review", "running")];
@@ -192,13 +187,13 @@ mod tests {
             filter: None,
             status_message: None,
         };
-        let mut buf = AnsiBuf::default();
 
-        InboxSummary::default().render(&ctx, &mut buf);
+        let lines = render_inbox_lines(&ctx, false);
+        let text = lines_text(&lines);
 
-        assert!(buf.as_str().contains("Inbox"));
-        assert!(buf.as_str().contains("high:1"));
-        assert!(buf.as_str().contains("1 open"));
+        assert!(text.contains("Inbox"));
+        assert!(text.contains("high:1"));
+        assert!(text.contains("1 open"));
     }
 
     #[test]
@@ -214,36 +209,31 @@ mod tests {
             filter: None,
             status_message: None,
         };
-        let mut buf = AnsiBuf::default();
 
-        InboxSummary::new(true).render(&ctx, &mut buf);
+        let lines = render_inbox_lines(&ctx, true);
+        let text = lines_text(&lines);
 
-        assert!(buf.as_str().contains("review"));
-        assert!(buf.as_str().contains("Apply changes?"));
+        assert!(text.contains("review"));
+        assert!(text.contains("Apply changes?"));
     }
 
     #[test]
     fn falls_back_to_attention_agents() {
-        let workspaces = vec![WorkspaceInfo {
-            id: "w1".to_string(),
-            name: "api".to_string(),
-            canonical_key: "api".to_string(),
-        }];
         let agents = vec![agent("a1", "impl", "waiting_for_input")];
         let ctx = RenderCtx {
             cols: 80,
-            workspaces: &workspaces,
+            workspaces: &[],
             agents: &agents,
             inbox_items: &[],
             selected_agent_id: None,
             filter: None,
             status_message: None,
         };
-        let mut buf = AnsiBuf::default();
 
-        InboxSummary::new(true).render(&ctx, &mut buf);
+        let lines = render_inbox_lines(&ctx, true);
+        let text = lines_text(&lines);
 
-        assert!(buf.as_str().contains("medium:1"));
-        assert!(buf.as_str().contains("impl"));
+        assert!(text.contains("medium:1"));
+        assert!(text.contains("impl"));
     }
 }

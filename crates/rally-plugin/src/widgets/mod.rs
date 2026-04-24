@@ -3,19 +3,11 @@ mod status_bar;
 mod workspace_tree;
 
 use serde::Deserialize;
+use zellij_widgets::prelude::*;
 
-pub use inbox_summary::InboxSummary;
-pub use status_bar::StatusBar;
-pub use workspace_tree::WorkspaceTree;
-
-#[allow(dead_code)]
-pub trait SidebarWidget {
-    fn id(&self) -> &'static str;
-    fn render(&self, ctx: &RenderCtx<'_>, buf: &mut AnsiBuf);
-    fn handle_key(&mut self, _ctx: &mut HandleCtx<'_>, _key: Key) -> Handled {
-        Handled::No
-    }
-}
+pub use inbox_summary::render_inbox_lines;
+pub use status_bar::render_status_lines;
+pub use workspace_tree::render_workspace_lines;
 
 pub struct RenderCtx<'a> {
     pub cols: usize,
@@ -27,56 +19,7 @@ pub struct RenderCtx<'a> {
     pub status_message: Option<&'a str>,
 }
 
-#[allow(dead_code)]
-pub struct HandleCtx<'a> {
-    pub workspaces: &'a [WorkspaceInfo],
-    pub agents: &'a [AgentInfo],
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
-pub enum Key {
-    Char(char),
-    Enter,
-    Esc,
-    Up,
-    Down,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
-pub enum Handled {
-    Yes,
-    No,
-}
-
-#[derive(Default)]
-pub struct AnsiBuf {
-    inner: String,
-}
-
-impl AnsiBuf {
-    pub fn with_capacity(capacity: usize) -> Self {
-        Self {
-            inner: String::with_capacity(capacity),
-        }
-    }
-
-    pub fn line(&mut self, line: impl AsRef<str>) {
-        self.inner.push_str(line.as_ref());
-        self.inner.push('\n');
-    }
-
-    #[allow(dead_code)]
-    pub fn as_str(&self) -> &str {
-        &self.inner
-    }
-
-    pub fn into_string(self) -> String {
-        self.inner
-    }
-}
-
+// Fields are deserialized from daemon JSON; not all are read by the rendering code yet.
 #[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
 pub struct WorkspaceInfo {
@@ -85,6 +28,7 @@ pub struct WorkspaceInfo {
     pub canonical_key: String,
 }
 
+// Fields are deserialized from daemon JSON; not all are read by the rendering code yet.
 #[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
 pub struct AgentInfo {
@@ -99,6 +43,7 @@ pub struct AgentInfo {
     pub pane_id: Option<u32>,
 }
 
+// Fields are deserialized from daemon JSON; not all are read by the rendering code yet.
 #[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
 pub struct InboxItemInfo {
@@ -114,16 +59,26 @@ pub struct InboxItemInfo {
     pub message: Option<String>,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn ansi_buf_appends_lines() {
-        let mut buf = AnsiBuf::with_capacity(16);
-        buf.line("one");
-        buf.line("two");
-
-        assert_eq!(buf.as_str(), "one\ntwo\n");
+pub fn state_glyph(state: &str) -> (&'static str, Style) {
+    match state {
+        "running" => ("●", Style::default().fg(Color::Green)),
+        "idle" => ("◐", Style::default().fg(Color::Yellow)),
+        "attention_required" => ("◉", Style::default().fg(Color::Red)),
+        "completed" => ("○", Style::default().fg(Color::Green)),
+        "stopped" => ("✕", Style::default().add_modifier(Modifier::DIM)),
+        "failed" => ("✗", Style::default().fg(Color::Red)),
+        "initializing" => ("⧗", Style::default().add_modifier(Modifier::DIM)),
+        "waiting_for_input" => ("⚠", Style::default().fg(Color::Yellow)),
+        _ => ("?", Style::default()),
     }
+}
+
+pub fn truncate_chars(value: &str, max: usize) -> String {
+    if value.chars().count() <= max {
+        return value.to_string();
+    }
+    let keep = max.saturating_sub(1);
+    let mut truncated: String = value.chars().take(keep).collect();
+    truncated.push('…');
+    truncated
 }
