@@ -4,17 +4,25 @@ use tracing::debug;
 
 use crate::ids::{Timestamp, WorkspaceId};
 
+/// A project workspace grouping related agents.
 #[derive(Debug, Clone)]
 pub struct Workspace {
+    /// Unique identifier.
     pub id: WorkspaceId,
+    /// Human-readable name.
     pub name: CompactString,
+    /// Immutable storage key derived from name + timestamp.
     pub canonical_key: CompactString,
+    /// Optional path to the associated git repository.
     pub repo: Option<PathBuf>,
+    /// When this workspace was created.
     pub created_at: Timestamp,
+    /// Whether this workspace has been archived.
     pub archived: bool,
 }
 
 impl Workspace {
+    /// Create a workspace, generating its canonical key from name + timestamp.
     pub fn new(id: WorkspaceId, name: CompactString, repo: Option<PathBuf>, at: Timestamp) -> Self {
         let canonical_key = generate_canonical_key(&name, repo.as_deref(), at);
         Self {

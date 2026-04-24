@@ -152,6 +152,23 @@ fn dispatch(service: &RallyService, request: Request) -> anyhow::Result<Response
             service.bind_pane(agent_id, session_name, tab_index, pane_id)?;
             Ok(Response::Ok)
         }
+        Request::SetAlias {
+            alias,
+            workspace_id,
+        } => {
+            service.set_alias(&alias, workspace_id)?;
+            Ok(Response::Ok)
+        }
+        Request::ResolveAlias { alias } => {
+            let ws_id = service.resolve_alias(&alias)?;
+            Ok(Response::AliasResolved {
+                workspace_id: ws_id,
+            })
+        }
+        Request::ListAliases => {
+            let aliases = service.list_aliases()?;
+            Ok(Response::AliasList { items: aliases })
+        }
         _ => Ok(Response::Error {
             message: "unknown method".into(),
         }),
@@ -171,6 +188,9 @@ fn method_name(req: &Request) -> &'static str {
         Request::ListInbox { .. } => "list_inbox",
         Request::AckInboxItem { .. } => "ack_inbox_item",
         Request::BindPane { .. } => "bind_pane",
+        Request::SetAlias { .. } => "set_alias",
+        Request::ResolveAlias { .. } => "resolve_alias",
+        Request::ListAliases => "list_aliases",
         _ => "unknown",
     }
 }

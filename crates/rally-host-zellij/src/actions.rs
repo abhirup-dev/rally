@@ -51,8 +51,8 @@ impl ZellijActions {
 
     /// Dump the screen contents of a specific pane by ID.
     ///
-    /// Uses `zellij [--session S] action dump-screen --pane-id <id> /dev/stdout`
-    /// (requires zellij >= 0.44.0).
+    /// Uses `zellij [--session S] action dump-screen --pane-id <id>`
+    /// (requires zellij >= 0.44.0). Omitting `--path` prints to stdout.
     #[instrument(skip_all, fields(pane_id, session = ?handle.as_ref().map(|h| h.session_name.as_str())))]
     pub fn dump_screen(handle: Option<&SessionHandle>, pane_id: u32) -> anyhow::Result<String> {
         let mut cmd = std::process::Command::new("zellij");
@@ -60,13 +60,7 @@ impl ZellijActions {
             cmd.arg("--session").arg(h.session_name.as_str());
         }
         let pane_id_str = pane_id.to_string();
-        cmd.args([
-            "action",
-            "dump-screen",
-            "--pane-id",
-            &pane_id_str,
-            "/dev/stdout",
-        ]);
+        cmd.args(["action", "dump-screen", "--pane-id", &pane_id_str]);
         debug!(pane_id, "running zellij action dump-screen --pane-id");
         let output = cmd
             .output()

@@ -61,6 +61,11 @@ enum Commands {
         #[command(subcommand)]
         action: LayoutAction,
     },
+    /// Manage workspace aliases
+    Alias {
+        #[command(subcommand)]
+        action: AliasAction,
+    },
     /// Pane ↔ agent correlation shim (exec'd inside the new pane)
     #[command(name = "_attach")]
     Attach {
@@ -136,6 +141,24 @@ enum CaptureAction {
 }
 
 #[derive(Subcommand)]
+enum AliasAction {
+    /// Set an alias for a workspace
+    Set {
+        /// Alias name (e.g. "my-project")
+        alias: String,
+        /// Workspace ID to point to
+        workspace_id: String,
+    },
+    /// Resolve an alias to its workspace ID
+    Get {
+        /// Alias name
+        alias: String,
+    },
+    /// List all aliases
+    Ls,
+}
+
+#[derive(Subcommand)]
 enum LayoutAction {
     /// Print the bundled rally.kdl layout to stdout
     Export,
@@ -176,6 +199,11 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::Capture { action } => match action {
             CaptureAction::Snapshot { .. } => "capture snapshot",
             CaptureAction::Tail { .. } => "capture tail",
+        },
+        Commands::Alias { action } => match action {
+            AliasAction::Set { .. } => "alias set",
+            AliasAction::Get { .. } => "alias get",
+            AliasAction::Ls => "alias ls",
         },
         Commands::InstallPlugin => "install-plugin",
         Commands::Layout { .. } => "layout export",
@@ -304,6 +332,37 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             info!(session = %session_name, "rally down: tearing down standalone session");
             rally_host_zellij::StandaloneBootstrap::down(&session_name)?;
             println!("stopped: {session_name}");
+        }
+
+        Commands::Alias { action } => {
+            let mut client = connect(&socket_path).await?;
+            match action {
+                AliasAction::Set {
+                    alias,
+                    workspace_id,
+                } => {
+                    let ws_id = parse_workspace_id(&workspace_id)?;
+                    let resp = client
+                        .call(Request::SetAlias {
+                            alias: alias.into(),
+                            workspace_id: ws_id,
+                        })
+                        .await?;
+                    print_response(&resp, cli.json);
+                }
+                AliasAction::Get { alias } => {
+                    let resp = client
+                        .call(Request::ResolveAlias {
+                            alias: alias.into(),
+                        })
+                        .await?;
+                    print_response(&resp, cli.json);
+                }
+                AliasAction::Ls => {
+                    let resp = client.call(Request::ListAliases).await?;
+                    print_response(&resp, cli.json);
+                }
+            }
         }
 
         Commands::Capture { action } => {
@@ -524,6 +583,22 @@ fn print_response(resp: &Response, json: bool) {
                             "{} {} {:?} pane:{} (ws:{})",
                             a.id, a.role, a.state, pane, a.workspace_id
                         );
+                    }
+                }
+            }
+            Response::AliasResolved { workspace_id } => {
+                if let Some(id) = workspace_id {
+                    println!("{id}");
+                } else {
+                    println!("alias not found");
+                }
+            }
+            Response::AliasList { items } => {
+                if items.is_empty() {
+                    println!("no aliases");
+                } else {
+                    for a in items {
+                        println!("{:<20} → {}", a.alias, a.workspace_id);
                     }
                 }
             }

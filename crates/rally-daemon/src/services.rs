@@ -220,6 +220,18 @@ impl RallyService {
         let store = self.store.lock().unwrap();
         AliasRepo::resolve(&*store, alias).map_err(|e| anyhow::anyhow!("{e}"))
     }
+
+    pub fn list_aliases(&self) -> anyhow::Result<Vec<rally_proto::v1::AliasView>> {
+        let store = self.store.lock().unwrap();
+        let aliases = AliasRepo::list_aliases(&*store).map_err(|e| anyhow::anyhow!("{e}"))?;
+        Ok(aliases
+            .into_iter()
+            .map(|(alias, workspace_id)| rally_proto::v1::AliasView {
+                alias: alias.into(),
+                workspace_id,
+            })
+            .collect())
+    }
 }
 
 fn ws_to_view(ws: &Workspace) -> WorkspaceView {

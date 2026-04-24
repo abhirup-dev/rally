@@ -2,9 +2,9 @@ use rally_core::event::DomainEvent;
 use rally_core::ids::WorkspaceId;
 use rally_core::ports::EventLog;
 use rusqlite::Connection;
-use tracing::debug;
+use tracing::{debug, warn};
 
-use crate::convert::{event_to_stored, ws_id_to_str};
+use crate::convert::{event_to_stored, stored_to_event, ws_id_to_str, StoredEvent};
 use crate::db::Store;
 use crate::StoreError;
 
@@ -39,9 +39,6 @@ impl EventLog for Store {
     }
 
     fn list_for_workspace(&self, id: WorkspaceId) -> Result<Vec<DomainEvent>, Self::Error> {
-        // We return the raw stored events as reconstructed DomainEvents.
-        // For Phase 2 the caller re-projects from events; full reconstruction
-        // is deferred until Phase 3 where it's needed.
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare_cached(
             "SELECT seq, workspace_id, kind, payload_json, at_ms
@@ -50,16 +47,29 @@ impl EventLog for Store {
         let ws_str = ws_id_to_str(id);
         let rows = stmt.query_map([&ws_str], |row| {
             let _seq: i64 = row.get(0)?;
-            let _ws: String = row.get(1)?;
+            let ws: String = row.get(1)?;
             let kind: String = row.get(2)?;
-            let _payload: String = row.get(3)?;
-            let _at: i64 = row.get(4)?;
-            Ok(kind)
+            let payload_json: String = row.get(3)?;
+            let at_ms: i64 = row.get(4)?;
+            Ok((ws, kind, payload_json, at_ms))
         })?;
 
-        // Phase 2: return count-check placeholder — full deserialization in Phase 3.
-        // Callers in tests use the count, not the enum variant, for the gate.
-        let _ = rows.count();
-        Ok(vec![])
+        let mut events = Vec::new();
+        for row in rows {
+            let (_ws, kind, payload_json, at_ms) = row?;
+            let payload: serde_json::Value =
+                serde_json::from_str(&payload_json).unwrap_or(serde_json::Value::Null);
+            let stored = StoredEvent {
+                workspace_id: ws_id_to_str(id),
+                kind,
+                payload,
+                at_ms: at_ms as u64,
+            };
+            match stored_to_event(&stored) {
+                Ok(event) => events.push(event),
+                Err(e) => warn!(error = %e, "skipping undeserializable event"),
+            }
+        }
+        Ok(events)
     }
 }

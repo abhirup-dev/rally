@@ -16,7 +16,10 @@ pub enum CaptureMode {
 /// A reference to stored capture data (body on disk / ring buffer).
 #[derive(Debug, Clone)]
 pub struct CaptureRef {
+    /// Which agent produced this capture.
     pub agent: AgentId,
+    /// Capture strategy used.
     pub mode: CaptureMode,
+    /// SHA-256 of the captured bytes for deduplication.
     pub bytes_hash: [u8; 32],
 }

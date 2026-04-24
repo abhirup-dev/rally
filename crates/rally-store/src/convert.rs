@@ -1,8 +1,9 @@
 /// Conversions between domain types and their SQLite-storable representations.
-use rally_core::agent::AgentState;
+use compact_str::CompactString;
+use rally_core::agent::{AgentState, StateCause};
 use rally_core::event::DomainEvent;
-use rally_core::ids::{AgentId, HookId, InboxItemId, WorkspaceId};
-use rally_core::inbox::Urgency;
+use rally_core::ids::{AgentId, HookId, InboxItemId, Timestamp, WorkspaceId};
+use rally_core::inbox::{InboxKind, Urgency};
 use rally_core::pane::PaneRef;
 use serde::{Deserialize, Serialize};
 use ulid::Ulid;
@@ -209,9 +210,137 @@ fn urgency_to_str(u: Urgency) -> &'static str {
     }
 }
 
+pub(crate) fn stored_to_event(stored: &StoredEvent) -> Result<DomainEvent, crate::StoreError> {
+    let at = Timestamp::from_millis(stored.at_ms);
+    let p = &stored.payload;
+
+    match stored.kind.as_str() {
+        "WorkspaceCreated" => {
+            let id = str_to_ws_id(p["id"].as_str().unwrap_or_default())?;
+            let name = CompactString::from(p["name"].as_str().unwrap_or_default());
+            let repo = p["repo"].as_str().map(std::path::PathBuf::from);
+            Ok(DomainEvent::WorkspaceCreated { id, name, repo, at })
+        }
+        "WorkspaceArchived" => {
+            let id = str_to_ws_id(p["id"].as_str().unwrap_or_default())?;
+            Ok(DomainEvent::WorkspaceArchived { id, at })
+        }
+        "AgentRegistered" => {
+            let id = str_to_agent_id(p["id"].as_str().unwrap_or_default())?;
+            let workspace = str_to_ws_id(p["workspace"].as_str().unwrap_or_default())?;
+            let role = CompactString::from(p["role"].as_str().unwrap_or_default());
+            let runtime = CompactString::from(p["runtime"].as_str().unwrap_or_default());
+            Ok(DomainEvent::AgentRegistered {
+                id,
+                workspace,
+                role,
+                runtime,
+                at,
+            })
+        }
+        "AgentAttachedPane" => {
+            let id = str_to_agent_id(p["id"].as_str().unwrap_or_default())?;
+            let pane_ref = PaneRef {
+                session_name: CompactString::from(p["session"].as_str().unwrap_or_default()),
+                tab_index: p["tab"].as_u64().unwrap_or(0) as u32,
+                pane_id: p["pane"].as_u64().unwrap_or(0) as u32,
+            };
+            Ok(DomainEvent::AgentAttachedPane { id, pane_ref, at })
+        }
+        "AgentStateChanged" => {
+            let id = str_to_agent_id(p["id"].as_str().unwrap_or_default())?;
+            let from = str_to_state(p["from"].as_str().unwrap_or("initializing"))?;
+            let to = str_to_state(p["to"].as_str().unwrap_or("initializing"))?;
+            let cause_str = p["cause"].as_str().unwrap_or("Manual");
+            let cause = match cause_str {
+                "Started" => StateCause::Started,
+                "IdleTimeout" => StateCause::IdleTimeout,
+                "InputReceived" => StateCause::InputReceived,
+                "Acknowledged" => StateCause::Acknowledged,
+                "Manual" => StateCause::Manual,
+                other => StateCause::HookEvent(CompactString::from(other)),
+            };
+            Ok(DomainEvent::AgentStateChanged {
+                id,
+                from,
+                to,
+                cause,
+                at,
+            })
+        }
+        "AgentMetadataUpdated" => {
+            let id = str_to_agent_id(p["id"].as_str().unwrap_or_default())?;
+            let key = CompactString::from(p["key"].as_str().unwrap_or_default());
+            let value = p["value"].clone();
+            Ok(DomainEvent::AgentMetadataUpdated { id, key, value, at })
+        }
+        "CaptureSnapshot" => {
+            let agent = str_to_agent_id(p["agent"].as_str().unwrap_or_default())?;
+            let bytes_hash = hex::decode_bytes_hash(p["hash"].as_str().unwrap_or_default());
+            Ok(DomainEvent::CaptureSnapshot {
+                agent,
+                bytes_hash,
+                at,
+            })
+        }
+        "InboxItemRaised" => {
+            let id = str_to_inbox_id(p["id"].as_str().unwrap_or_default())?;
+            let agent = p["agent"].as_str().map(str_to_agent_id).transpose()?;
+            let urgency = str_to_urgency(p["urgency"].as_str().unwrap_or("medium"));
+            let kind = InboxKind::HookNotification {
+                message: CompactString::from(p["kind"].as_str().unwrap_or_default()),
+            };
+            Ok(DomainEvent::InboxItemRaised {
+                id,
+                agent,
+                urgency,
+                kind,
+                at,
+            })
+        }
+        "InboxItemAcked" => {
+            let id = str_to_inbox_id(p["id"].as_str().unwrap_or_default())?;
+            Ok(DomainEvent::InboxItemAcked { id, at })
+        }
+        "HookFired" => {
+            let registration = str_to_hook_id(p["registration"].as_str().unwrap_or_default())?;
+            let event = CompactString::from(p["event"].as_str().unwrap_or_default());
+            Ok(DomainEvent::HookFired {
+                registration,
+                event,
+                at,
+            })
+        }
+        other => Err(crate::StoreError::NotFound(format!(
+            "unknown event kind: {other}"
+        ))),
+    }
+}
+
+fn str_to_urgency(s: &str) -> Urgency {
+    match s {
+        "low" => Urgency::Low,
+        "high" => Urgency::High,
+        _ => Urgency::Medium,
+    }
+}
+
 mod hex {
     pub fn encode_bytes_hash(bytes: &[u8; 32]) -> String {
         bytes.iter().map(|b| format!("{b:02x}")).collect()
+    }
+
+    pub fn decode_bytes_hash(s: &str) -> [u8; 32] {
+        let mut out = [0u8; 32];
+        for (i, chunk) in s.as_bytes().chunks(2).enumerate() {
+            if i >= 32 {
+                break;
+            }
+            if let Ok(byte) = u8::from_str_radix(std::str::from_utf8(chunk).unwrap_or("00"), 16) {
+                out[i] = byte;
+            }
+        }
+        out
     }
 }
 

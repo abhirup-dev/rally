@@ -120,6 +120,14 @@ pub enum Request {
         tab_index: u32,
         pane_id: u32,
     },
+    SetAlias {
+        alias: CompactString,
+        workspace_id: WorkspaceId,
+    },
+    ResolveAlias {
+        alias: CompactString,
+    },
+    ListAliases,
 }
 
 /// Serializable trigger enum for the wire layer.
@@ -154,6 +162,8 @@ pub enum Response {
     Agent(AgentView),
     AgentList { items: Vec<AgentView> },
     InboxList { items: Vec<InboxItemView> },
+    AliasResolved { workspace_id: Option<WorkspaceId> },
+    AliasList { items: Vec<AliasView> },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -188,6 +198,12 @@ pub struct InboxItemView {
     pub urgency: Urgency,
     pub acked: bool,
     pub raised_at: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AliasView {
+    pub alias: CompactString,
+    pub workspace_id: WorkspaceId,
 }
 
 // ---------------------------------------------------------------------------
