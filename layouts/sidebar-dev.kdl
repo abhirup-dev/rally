@@ -1,0 +1,11 @@
+layout {
+    pane split_direction="vertical" {
+        pane name="main" size="75%"
+        pane name="rally-sidebar" size="25%" {
+            plugin location="file:~/.config/rally/rally.wasm" {
+                skip_plugin_cache true
+                _allow_exec_host_cmd true
+            }
+        }
+    }
+}

@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use std::collections::BTreeMap;
 
 use serde::Deserialize;
@@ -10,10 +8,9 @@ struct RallyPlugin {
     workspaces: Vec<WorkspaceInfo>,
     agents: Vec<AgentInfo>,
     last_error: Option<String>,
-    rows: usize,
-    cols: usize,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
 struct WorkspaceInfo {
     id: String,
@@ -21,6 +18,7 @@ struct WorkspaceInfo {
     canonical_key: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
 struct AgentInfo {
     id: String,
@@ -67,18 +65,17 @@ impl ZellijPlugin for RallyPlugin {
                     self.last_error = Some(String::from_utf8_lossy(&stderr).trim().to_string());
                     return true;
                 }
+                self.last_error = None;
                 match cmd_type {
                     "workspace_list" => {
                         if let Ok(parsed) = serde_json::from_slice::<WorkspaceListResponse>(&stdout)
                         {
                             self.workspaces = parsed.items;
-                            self.last_error = None;
                         }
                     }
                     "agent_list" => {
                         if let Ok(parsed) = serde_json::from_slice::<AgentListResponse>(&stdout) {
                             self.agents = parsed.items;
-                            self.last_error = None;
                         }
                     }
                     _ => {}
@@ -89,22 +86,19 @@ impl ZellijPlugin for RallyPlugin {
         }
     }
 
-    fn render(&mut self, rows: usize, cols: usize) {
-        self.rows = rows;
-        self.cols = cols;
-
+    fn render(&mut self, _rows: usize, cols: usize) {
+        let w = cols.min(40);
         println!("\x1b[1m Rally \x1b[0m");
-        println!("{}", "─".repeat(cols.min(40)));
+        println!("{}", "─".repeat(w));
 
         if let Some(ref err) = self.last_error {
-            println!("\x1b[31m⚠ {}\x1b[0m", truncate(err, cols - 2));
+            println!("\x1b[31m⚠ {}\x1b[0m", truncate(err, w.saturating_sub(2)));
             return;
         }
 
         if self.workspaces.is_empty() {
-            println!("\x1b[2mno workspaces\x1b[0m");
-            println!();
-            println!("\x1b[2mrally workspace new --name <n>\x1b[0m");
+            println!("\x1b[2mGrant permission, then");
+            println!("loading…\x1b[0m");
             return;
         }
 
@@ -122,7 +116,7 @@ impl ZellijPlugin for RallyPlugin {
                     let glyph = state_glyph(&agent.state);
                     let pane = agent.pane_id.map(|p| format!(" p:{p}")).unwrap_or_default();
                     println!(
-                        "  {} \x1b[0m{}\x1b[2m ({}){}\x1b[0m",
+                        "  {} {}\x1b[2m ({}){}\x1b[0m",
                         glyph, agent.role, agent.runtime, pane
                     );
                 }
@@ -137,7 +131,7 @@ impl ZellijPlugin for RallyPlugin {
             .filter(|a| a.state == "attention_required" || a.state == "waiting_for_input")
             .count();
 
-        println!("{}", "─".repeat(cols.min(40)));
+        println!("{}", "─".repeat(w));
         print!("{total} agents");
         if running > 0 {
             print!(" \x1b[32m{running}↑\x1b[0m");
@@ -175,14 +169,14 @@ struct AgentListResponse {
 
 fn state_glyph(state: &str) -> &'static str {
     match state {
-        "initializing" => "\x1b[2m○\x1b[0m",
-        "running" => "\x1b[32m●\x1b[0m",
-        "idle" => "\x1b[33m◐\x1b[0m",
-        "waiting_for_input" => "\x1b[33m⧗\x1b[0m",
-        "attention_required" => "\x1b[31m⚠\x1b[0m",
-        "completed" => "\x1b[32m✓\x1b[0m",
-        "failed" => "\x1b[31m✗\x1b[0m",
-        "stopped" => "\x1b[2m◻\x1b[0m",
+        "initializing" => "\x1b[2m○",
+        "running" => "\x1b[32m●",
+        "idle" => "\x1b[33m◐",
+        "waiting_for_input" => "\x1b[33m⧗",
+        "attention_required" => "\x1b[31m⚠",
+        "completed" => "\x1b[32m✓",
+        "failed" => "\x1b[31m✗",
+        "stopped" => "\x1b[2m◻",
         _ => "?",
     }
 }

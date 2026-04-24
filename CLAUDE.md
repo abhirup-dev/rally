@@ -59,7 +59,29 @@ cargo clippy --all-targets -- -D warnings
 
 # Plugin (wasm32-wasip1, built separately):
 cargo build -p rally-plugin --target wasm32-wasip1 --release
+cp target/wasm32-wasip1/release/rally-plugin.wasm ~/.config/rally/rally.wasm
+
+# Test plugin in zellij (always use --skip-plugin-cache to avoid stale wasm):
+PATH="$PWD/target/debug:$PATH" zellij -n layouts/sidebar-dev.kdl
 ```
+
+### Plugin build notes
+
+- `rally-plugin` is a **binary** crate (not cdylib). The `register_plugin!` macro generates `main()` and `_start`.
+- It is excluded from `default-members` — never builds with `cargo build --workspace`.
+- Zellij aggressively caches plugin wasm. The dev layout uses `skip_plugin_cache true` to always load fresh.
+- Artifact path: `target/wasm32-wasip1/release/rally-plugin.wasm` (hyphen, not underscore).
+- **Permissions**: The plugin needs `RunCommands` + `ReadApplicationState`. Pre-grant via:
+  ```bash
+  # macOS cache path:
+  cat > ~/Library/Caches/org.Zellij-Contributors.Zellij/permissions.kdl <<'KDL'
+  "/Users/abhirupdas/.config/rally/rally.wasm" {
+      RunCommands
+      ReadApplicationState
+  }
+  KDL
+  ```
+  Without this, `request_permission()` shows a dialog that blocks plugin rendering in narrow panes.
 
 ## Architecture Overview
 
