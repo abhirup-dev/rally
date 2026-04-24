@@ -1,9 +1,15 @@
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
+use rally_core::agent::Agent;
+use rally_core::event::DomainEvent;
+use rally_core::workspace::Workspace;
 use rusqlite::Connection;
 use tracing::{debug, error, info};
 
+use crate::agent::insert_agent;
+use crate::event_log::insert_event;
+use crate::workspace::insert_workspace;
 use crate::StoreError;
 
 /// Current schema version. Bump when adding migrations.
@@ -58,6 +64,7 @@ CREATE TABLE IF NOT EXISTS aliases (
 );
 ";
 
+
 /// Thread-safe handle to the SQLite store.
 ///
 /// Wraps a single `Connection` behind a mutex — the daemon uses a dedicated
@@ -85,6 +92,28 @@ impl Store {
     pub fn raw_exec(&self, sql: &str) {
         let conn = self.conn.lock().unwrap();
         let _ = conn.execute_batch(sql);
+    }
+
+    /// Atomically save a workspace and its creation event in a single transaction.
+    /// Fixes ral-ieu: prevents workspace existing in DB without a corresponding event.
+    pub fn save_workspace_and_event(&self, ws: &Workspace, event: &DomainEvent) -> Result<(), StoreError> {
+        let conn = self.conn.lock().unwrap();
+        let tx = conn.unchecked_transaction()?;
+        insert_workspace(&tx, ws)?;
+        insert_event(&tx, event)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Atomically save an agent and its registration event in a single transaction.
+    /// Fixes ral-ieu: prevents agent existing in DB without a corresponding event.
+    pub fn save_agent_and_event(&self, agent: &Agent, event: &DomainEvent) -> Result<(), StoreError> {
+        let conn = self.conn.lock().unwrap();
+        let tx = conn.unchecked_transaction()?;
+        insert_agent(&tx, agent)?;
+        insert_event(&tx, event)?;
+        tx.commit()?;
+        Ok(())
     }
 
     /// Open (or create) the database at `path` with WAL mode enabled.

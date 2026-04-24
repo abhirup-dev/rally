@@ -4,4 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-rally-core = { workspace = true }
+rally-core        = { workspace = true }
+rally-host-zellij = { workspace = true }
+anyhow            = "1"
+tracing           = { workspace = true }
+bytes             = "1"
+serde_json        = "1"

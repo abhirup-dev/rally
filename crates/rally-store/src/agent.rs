@@ -4,6 +4,7 @@ use compact_str::CompactString;
 use rally_core::agent::Agent;
 use rally_core::ids::{AgentId, Timestamp, WorkspaceId};
 use rally_core::ports::AgentRepo;
+use rusqlite::Connection;
 
 use crate::convert::{
     agent_id_to_str, pane_ref_from_row, state_to_str, str_to_agent_id, str_to_state,
@@ -11,6 +12,39 @@ use crate::convert::{
 };
 use crate::db::Store;
 use crate::StoreError;
+
+pub(crate) fn insert_agent(conn: &Connection, agent: &Agent) -> Result<(), StoreError> {
+    let metadata = serde_json::to_string(&agent.metadata)?;
+    let pane = agent.pane_ref.as_ref();
+    conn.execute(
+        "INSERT INTO agents
+           (id, workspace_id, role, runtime, state,
+            pane_session, pane_tab_index, pane_id,
+            restart_count, metadata_json, created_at)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)
+         ON CONFLICT(id) DO UPDATE SET
+           state           = excluded.state,
+           pane_session    = excluded.pane_session,
+           pane_tab_index  = excluded.pane_tab_index,
+           pane_id         = excluded.pane_id,
+           restart_count   = excluded.restart_count,
+           metadata_json   = excluded.metadata_json",
+        rusqlite::params![
+            agent_id_to_str(agent.id),
+            ws_id_to_str(agent.workspace_id),
+            agent.role.as_str(),
+            agent.runtime.as_str(),
+            state_to_str(agent.state),
+            pane.map(|p| p.session_name.as_str()),
+            pane.map(|p| p.tab_index),
+            pane.map(|p| p.pane_id),
+            agent.restart_count,
+            metadata,
+            agent.created_at.as_millis() as i64,
+        ],
+    )?;
+    Ok(())
+}
 
 impl AgentRepo for Store {
     type Error = StoreError;
@@ -44,37 +78,8 @@ impl AgentRepo for Store {
     }
 
     fn save(&mut self, agent: &Agent) -> Result<(), Self::Error> {
-        let metadata = serde_json::to_string(&agent.metadata)?;
-        let pane = agent.pane_ref.as_ref();
         let conn = self.conn.lock().unwrap();
-        conn.execute(
-            "INSERT INTO agents
-               (id, workspace_id, role, runtime, state,
-                pane_session, pane_tab_index, pane_id,
-                restart_count, metadata_json, created_at)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)
-             ON CONFLICT(id) DO UPDATE SET
-               state           = excluded.state,
-               pane_session    = excluded.pane_session,
-               pane_tab_index  = excluded.pane_tab_index,
-               pane_id         = excluded.pane_id,
-               restart_count   = excluded.restart_count,
-               metadata_json   = excluded.metadata_json",
-            rusqlite::params![
-                agent_id_to_str(agent.id),
-                ws_id_to_str(agent.workspace_id),
-                agent.role.as_str(),
-                agent.runtime.as_str(),
-                state_to_str(agent.state),
-                pane.map(|p| p.session_name.as_str()),
-                pane.map(|p| p.tab_index),
-                pane.map(|p| p.pane_id),
-                agent.restart_count,
-                metadata,
-                agent.created_at.as_millis() as i64,
-            ],
-        )?;
-        Ok(())
+        insert_agent(&conn, agent)
     }
 }
 

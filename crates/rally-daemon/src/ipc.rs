@@ -141,6 +141,10 @@ fn dispatch(
         Request::AckInboxItem { .. } => {
             Ok(Response::Error { message: "ack not yet implemented".into() })
         }
+        Request::BindPane { agent_id, session_name, tab_index, pane_id } => {
+            service.bind_pane(agent_id, session_name, tab_index, pane_id)?;
+            Ok(Response::Ok)
+        }
         _ => {
             Ok(Response::Error { message: "unknown method".into() })
         }
@@ -159,6 +163,7 @@ fn method_name(req: &Request) -> &'static str {
         Request::EmitAgentEvent { .. } => "emit_agent_event",
         Request::ListInbox { .. } => "list_inbox",
         Request::AckInboxItem { .. } => "ack_inbox_item",
+        Request::BindPane { .. } => "bind_pane",
         _ => "unknown",
     }
 }

@@ -1,31 +1,36 @@
 use rally_core::event::DomainEvent;
 use rally_core::ids::WorkspaceId;
 use rally_core::ports::EventLog;
+use rusqlite::Connection;
 use tracing::debug;
 
 use crate::convert::{event_to_stored, ws_id_to_str};
 use crate::db::Store;
 use crate::StoreError;
 
+pub(crate) fn insert_event(conn: &Connection, event: &DomainEvent) -> Result<(), StoreError> {
+    let stored = event_to_stored(event);
+    debug!(
+        kind = stored.kind,
+        workspace_id = stored.workspace_id,
+        at_ms = stored.at_ms,
+        "appending domain event"
+    );
+    let payload = serde_json::to_string(&stored.payload)?;
+    conn.execute(
+        "INSERT INTO events (workspace_id, kind, payload_json, at_ms)
+         VALUES (?1, ?2, ?3, ?4)",
+        rusqlite::params![stored.workspace_id, stored.kind, payload, stored.at_ms as i64],
+    )?;
+    Ok(())
+}
+
 impl EventLog for Store {
     type Error = StoreError;
 
     fn append(&mut self, event: &DomainEvent) -> Result<(), Self::Error> {
-        let stored = event_to_stored(event);
-        debug!(
-            kind = stored.kind,
-            workspace_id = stored.workspace_id,
-            at_ms = stored.at_ms,
-            "appending domain event"
-        );
-        let payload = serde_json::to_string(&stored.payload)?;
         let conn = self.conn.lock().unwrap();
-        conn.execute(
-            "INSERT INTO events (workspace_id, kind, payload_json, at_ms)
-             VALUES (?1, ?2, ?3, ?4)",
-            rusqlite::params![stored.workspace_id, stored.kind, payload, stored.at_ms as i64],
-        )?;
-        Ok(())
+        insert_event(&conn, event)
     }
 
     fn list_for_workspace(&self, id: WorkspaceId) -> Result<Vec<DomainEvent>, Self::Error> {

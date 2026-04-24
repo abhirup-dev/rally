@@ -713,7 +713,12 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 name = "rally-capture"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "bytes",
  "rally-core",
+ "rally-host-zellij",
+ "serde_json",
+ "tracing",
 ]
 
 [[package]]
@@ -725,7 +730,9 @@ dependencies = [
  "clap",
  "compact_str",
  "predicates",
+ "rally-capture",
  "rally-config",
+ "rally-host-zellij",
  "rally-proto",
  "rally-test-utils",
  "serde_json",
@@ -808,8 +815,12 @@ dependencies = [
 name = "rally-host-zellij"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "compact_str",
  "rally-core",
  "rally-proto",
+ "serde_json",
+ "tracing",
 ]
 
 [[package]]

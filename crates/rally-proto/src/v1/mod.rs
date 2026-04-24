@@ -114,6 +114,12 @@ pub enum Request {
     AckInboxItem {
         id: InboxItemId,
     },
+    BindPane {
+        agent_id: AgentId,
+        session_name: CompactString,
+        tab_index: u32,
+        pane_id: u32,
+    },
 }
 
 /// Serializable trigger enum for the wire layer.
@@ -168,6 +174,10 @@ pub struct AgentView {
     pub runtime: CompactString,
     pub state: AgentState,
     pub restart_count: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pane_session: Option<CompactString>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pane_id: Option<u32>,
     pub created_at: u64,
 }
 

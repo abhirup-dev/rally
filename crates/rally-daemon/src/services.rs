@@ -5,7 +5,7 @@ use compact_str::CompactString;
 use rally_core::agent::Agent;
 use rally_core::event::DomainEvent;
 use rally_core::ids::{AgentId, Timestamp, WorkspaceId};
-use rally_core::ports::{AgentRepo, AliasRepo, Clock, EventLog, IdGen, WorkspaceRepo};
+use rally_core::ports::{AgentRepo, AliasRepo, Clock, IdGen, WorkspaceRepo};
 use rally_core::workspace::Workspace;
 use rally_events::EventBus;
 use rally_proto::v1::{AgentView, WorkspaceView};
@@ -63,16 +63,15 @@ impl RallyService {
         let ws = Workspace::new(id, name.clone(), repo.clone(), at);
         let canonical_key = ws.canonical_key.clone();
 
-        let mut store = self.store.lock().unwrap();
-        WorkspaceRepo::save(&mut *store, &ws).map_err(|e| anyhow::anyhow!("{e}"))?;
-
         let event = DomainEvent::WorkspaceCreated {
             id,
             name: name.clone(),
             repo: repo.clone(),
             at,
         };
-        EventLog::append(&mut *store, &event).map_err(|e| anyhow::anyhow!("{e}"))?;
+
+        let store = self.store.lock().unwrap();
+        store.save_workspace_and_event(&ws, &event).map_err(|e| anyhow::anyhow!("{e}"))?;
         drop(store);
 
         self.event_bus.publish(event);
@@ -111,9 +110,6 @@ impl RallyService {
         let at = self.clock.now();
         let agent = Agent::new(id, workspace_id, role.clone(), runtime.clone(), at);
 
-        let mut store = self.store.lock().unwrap();
-        AgentRepo::save(&mut *store, &agent).map_err(|e| anyhow::anyhow!("{e}"))?;
-
         let event = DomainEvent::AgentRegistered {
             id,
             workspace: workspace_id,
@@ -121,7 +117,9 @@ impl RallyService {
             runtime: runtime.clone(),
             at,
         };
-        EventLog::append(&mut *store, &event).map_err(|e| anyhow::anyhow!("{e}"))?;
+
+        let store = self.store.lock().unwrap();
+        store.save_agent_and_event(&agent, &event).map_err(|e| anyhow::anyhow!("{e}"))?;
         drop(store);
 
         self.event_bus.publish(event);
@@ -134,8 +132,37 @@ impl RallyService {
             runtime,
             state: rally_proto::v1::AgentState::Initializing,
             restart_count: 0,
+            pane_session: None,
+            pane_id: None,
             created_at: at.as_millis(),
         })
+    }
+
+    pub fn bind_pane(
+        &self,
+        agent_id: AgentId,
+        session_name: CompactString,
+        tab_index: u32,
+        pane_id: u32,
+    ) -> anyhow::Result<()> {
+        use rally_core::pane::PaneRef;
+        let store = self.store.lock().unwrap();
+        let agent = AgentRepo::get(&*store, agent_id)
+            .map_err(|e| anyhow::anyhow!("{e}"))?
+            .ok_or_else(|| anyhow::anyhow!("agent {agent_id} not found"))?;
+        let pane_ref = PaneRef { session_name: session_name.clone(), tab_index, pane_id };
+        let mut updated = agent;
+        updated.pane_ref = Some(pane_ref.clone());
+        let event = DomainEvent::AgentAttachedPane {
+            id: agent_id,
+            pane_ref,
+            at: self.clock.now(),
+        };
+        store.save_agent_and_event(&updated, &event).map_err(|e| anyhow::anyhow!("{e}"))?;
+        drop(store);
+        self.event_bus.publish(event);
+        info!(%agent_id, %session_name, pane_id, "pane bound to agent");
+        Ok(())
     }
 
     pub fn get_agent(&self, id: AgentId) -> anyhow::Result<Option<AgentView>> {
@@ -194,6 +221,8 @@ fn agent_to_view(a: &Agent) -> AgentView {
         runtime: a.runtime.clone(),
         state: a.state.into(),
         restart_count: a.restart_count,
+        pane_session: a.pane_ref.as_ref().map(|p| p.session_name.clone()),
+        pane_id: a.pane_ref.as_ref().map(|p| p.pane_id),
         created_at: a.created_at.as_millis(),
     }
 }

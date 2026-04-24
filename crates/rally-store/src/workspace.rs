@@ -4,10 +4,32 @@ use compact_str::CompactString;
 use rally_core::ids::{Timestamp, WorkspaceId};
 use rally_core::ports::WorkspaceRepo;
 use rally_core::workspace::Workspace;
+use rusqlite::Connection;
 
 use crate::convert::{str_to_ws_id, ws_id_to_str};
 use crate::db::Store;
 use crate::StoreError;
+
+pub(crate) fn insert_workspace(conn: &Connection, ws: &Workspace) -> Result<(), StoreError> {
+    conn.execute(
+        "INSERT INTO workspaces (id, name, canonical_key, repo, created_at, archived)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+         ON CONFLICT(id) DO UPDATE SET
+           name          = excluded.name,
+           canonical_key = excluded.canonical_key,
+           repo          = excluded.repo,
+           archived      = excluded.archived",
+        rusqlite::params![
+            ws_id_to_str(ws.id),
+            ws.name.as_str(),
+            ws.canonical_key.as_str(),
+            ws.repo.as_ref().map(|p| p.to_string_lossy().into_owned()),
+            ws.created_at.as_millis() as i64,
+            ws.archived as i64,
+        ],
+    )?;
+    Ok(())
+}
 
 impl WorkspaceRepo for Store {
     type Error = StoreError;
@@ -38,24 +60,7 @@ impl WorkspaceRepo for Store {
 
     fn save(&mut self, ws: &Workspace) -> Result<(), Self::Error> {
         let conn = self.conn.lock().unwrap();
-        conn.execute(
-            "INSERT INTO workspaces (id, name, canonical_key, repo, created_at, archived)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-             ON CONFLICT(id) DO UPDATE SET
-               name          = excluded.name,
-               canonical_key = excluded.canonical_key,
-               repo          = excluded.repo,
-               archived      = excluded.archived",
-            rusqlite::params![
-                ws_id_to_str(ws.id),
-                ws.name.as_str(),
-                ws.canonical_key.as_str(),
-                ws.repo.as_ref().map(|p| p.to_string_lossy().into_owned()),
-                ws.created_at.as_millis() as i64,
-                ws.archived as i64,
-            ],
-        )?;
-        Ok(())
+        insert_workspace(&conn, ws)
     }
 }
 
