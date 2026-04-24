@@ -1,5 +1,6 @@
 #![deny(unsafe_code)]
 
+mod git;
 mod ipc;
 mod services;
 mod tracing_init;

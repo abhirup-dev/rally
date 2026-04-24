@@ -13,7 +13,7 @@ use crate::workspace::insert_workspace;
 use crate::StoreError;
 
 /// Current schema version. Bump when adding migrations.
-const SCHEMA_VERSION: u32 = 2;
+const SCHEMA_VERSION: u32 = 3;
 
 const MIGRATION_V1: &str = "
 CREATE TABLE IF NOT EXISTS workspaces (
@@ -55,13 +55,19 @@ CREATE TABLE IF NOT EXISTS aliases (
 );
 ";
 
+// V2 originally added canonical_key + aliases. V1 was later updated to include
+// both, so this migration only fires for DBs created before that update.
 const MIGRATION_V2: &str = "
-ALTER TABLE workspaces ADD COLUMN canonical_key TEXT NOT NULL DEFAULT '';
-
 CREATE TABLE IF NOT EXISTS aliases (
     alias        TEXT NOT NULL PRIMARY KEY,
     workspace_id TEXT NOT NULL REFERENCES workspaces(id)
 );
+";
+
+const MIGRATION_V3: &str = "
+ALTER TABLE agents ADD COLUMN cwd TEXT;
+ALTER TABLE agents ADD COLUMN project_root TEXT;
+ALTER TABLE agents ADD COLUMN branch TEXT;
 ";
 
 /// Thread-safe handle to the SQLite store.
@@ -190,15 +196,46 @@ fn migrate(conn: &Connection) -> Result<(), StoreError> {
         })?;
     }
 
-    if (1..2).contains(&version) {
+    if version < 2 {
         info!(
             migration_version = 2,
             "applying migration v2 (canonical_key + aliases)"
         );
+        // canonical_key may already exist if v1 was created with the updated schema.
+        let has_canonical_key: bool = conn
+            .prepare("SELECT 1 FROM pragma_table_info('workspaces') WHERE name='canonical_key'")
+            .and_then(|mut s| s.exists([]))
+            .unwrap_or(false);
+        if !has_canonical_key {
+            conn.execute_batch(
+                "ALTER TABLE workspaces ADD COLUMN canonical_key TEXT NOT NULL DEFAULT ''",
+            )
+            .map_err(|e| {
+                error!(version = 2, error = %e, "migration v2 canonical_key failed");
+                StoreError::Migration {
+                    version: 2,
+                    reason: e.to_string(),
+                }
+            })?;
+        }
         conn.execute_batch(MIGRATION_V2).map_err(|e| {
             error!(version = 2, error = %e, "migration v2 failed");
             StoreError::Migration {
                 version: 2,
+                reason: e.to_string(),
+            }
+        })?;
+    }
+
+    if version < 3 {
+        info!(
+            migration_version = 3,
+            "applying migration v3 (agent cwd, project_root, branch)"
+        );
+        conn.execute_batch(MIGRATION_V3).map_err(|e| {
+            error!(version = 3, error = %e, "migration v3 failed");
+            StoreError::Migration {
+                version: 3,
                 reason: e.to_string(),
             }
         })?;

@@ -253,11 +253,16 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                     command,
                 } => {
                     let ws_id = parse_workspace_id(&workspace)?;
+                    let resolved_cwd = cwd
+                        .as_deref()
+                        .map(std::path::PathBuf::from)
+                        .or_else(|| std::env::current_dir().ok());
                     let resp = client
                         .call(Request::RegisterAgent {
                             workspace_id: ws_id,
                             role: role.clone().into(),
                             runtime: runtime.into(),
+                            cwd: resolved_cwd,
                         })
                         .await?;
 

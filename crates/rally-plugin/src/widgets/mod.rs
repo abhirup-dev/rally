@@ -41,6 +41,12 @@ pub struct AgentInfo {
     pub pane_session: Option<String>,
     #[serde(default)]
     pub pane_id: Option<u32>,
+    #[serde(default)]
+    pub cwd: Option<String>,
+    #[serde(default)]
+    pub project_root: Option<String>,
+    #[serde(default)]
+    pub branch: Option<String>,
 }
 
 // Fields are deserialized from daemon JSON; not all are read by the rendering code yet.

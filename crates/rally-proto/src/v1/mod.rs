@@ -97,6 +97,8 @@ pub enum Request {
         workspace_id: WorkspaceId,
         role: CompactString,
         runtime: CompactString,
+        #[serde(default)]
+        cwd: Option<PathBuf>,
     },
     GetAgent {
         id: AgentId,
@@ -190,6 +192,12 @@ pub struct AgentView {
     pub pane_session: Option<CompactString>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pane_id: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_root: Option<PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub branch: Option<CompactString>,
     pub created_at: u64,
 }
 

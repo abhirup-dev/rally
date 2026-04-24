@@ -47,8 +47,13 @@ pub fn render_workspace_lines(ctx: &RenderCtx<'_>) -> Vec<Line<'static>> {
 }
 
 fn render_agent_line(agent: &AgentInfo, cols: usize, selected: bool) -> Line<'static> {
+    let branch_tag = agent
+        .branch
+        .as_deref()
+        .map(|b| format!(" [{b}]"))
+        .unwrap_or_default();
     let pane = agent.pane_id.map(|p| format!(" p:{p}")).unwrap_or_default();
-    let suffix = format!(" ({}){}", agent.runtime, pane);
+    let suffix = format!(" ({}){}{}", agent.runtime, branch_tag, pane);
     let max_role = cols
         .saturating_sub(6)
         .saturating_sub(suffix.chars().count())
@@ -105,6 +110,9 @@ mod tests {
             state: state.to_string(),
             pane_session: None,
             pane_id: Some(7),
+            cwd: None,
+            project_root: None,
+            branch: None,
         }
     }
 

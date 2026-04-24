@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use compact_str::CompactString;
 use thiserror::Error;
 use tracing::warn;
@@ -149,6 +151,12 @@ pub struct Agent {
     pub pane_id: Option<PaneId>,
     /// How many times this agent has been restarted.
     pub restart_count: u32,
+    /// Current working directory of the agent's process.
+    pub cwd: Option<PathBuf>,
+    /// Root of the git repository (or project dir) containing cwd.
+    pub project_root: Option<PathBuf>,
+    /// Current git branch name, derived from project_root.
+    pub branch: Option<CompactString>,
     /// Arbitrary key-value metadata.
     pub metadata: std::collections::HashMap<CompactString, serde_json::Value>,
     /// When this agent was first registered.
@@ -173,6 +181,9 @@ impl Agent {
             pane_ref: None,
             pane_id: None,
             restart_count: 0,
+            cwd: None,
+            project_root: None,
+            branch: None,
             metadata: std::collections::HashMap::new(),
             created_at,
         }

@@ -20,14 +20,18 @@ pub(crate) fn insert_agent(conn: &Connection, agent: &Agent) -> Result<(), Store
         "INSERT INTO agents
            (id, workspace_id, role, runtime, state,
             pane_session, pane_tab_index, pane_id,
-            restart_count, metadata_json, created_at)
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)
+            restart_count, cwd, project_root, branch,
+            metadata_json, created_at)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)
          ON CONFLICT(id) DO UPDATE SET
            state           = excluded.state,
            pane_session    = excluded.pane_session,
            pane_tab_index  = excluded.pane_tab_index,
            pane_id         = excluded.pane_id,
            restart_count   = excluded.restart_count,
+           cwd             = excluded.cwd,
+           project_root    = excluded.project_root,
+           branch          = excluded.branch,
            metadata_json   = excluded.metadata_json",
         rusqlite::params![
             agent_id_to_str(agent.id),
@@ -39,6 +43,12 @@ pub(crate) fn insert_agent(conn: &Connection, agent: &Agent) -> Result<(), Store
             pane.map(|p| p.tab_index),
             pane.map(|p| p.pane_id),
             agent.restart_count,
+            agent.cwd.as_ref().map(|p| p.to_string_lossy().into_owned()),
+            agent
+                .project_root
+                .as_ref()
+                .map(|p| p.to_string_lossy().into_owned()),
+            agent.branch.as_ref().map(|b| b.as_str()),
             metadata,
             agent.created_at.as_millis() as i64,
         ],
@@ -54,7 +64,8 @@ impl AgentRepo for Store {
         let mut stmt = conn.prepare_cached(
             "SELECT id, workspace_id, role, runtime, state,
                     pane_session, pane_tab_index, pane_id,
-                    restart_count, metadata_json, created_at
+                    restart_count, cwd, project_root, branch,
+                    metadata_json, created_at
              FROM agents WHERE id = ?1",
         )?;
         let mut rows = stmt.query([agent_id_to_str(id)])?;
@@ -70,7 +81,8 @@ impl AgentRepo for Store {
         let mut stmt = conn.prepare_cached(
             "SELECT id, workspace_id, role, runtime, state,
                     pane_session, pane_tab_index, pane_id,
-                    restart_count, metadata_json, created_at
+                    restart_count, cwd, project_root, branch,
+                    metadata_json, created_at
              FROM agents WHERE workspace_id = ?1 ORDER BY created_at",
         )?;
         let rows = stmt.query_map([ws_id_to_str(workspace_id)], |r| Ok(row_to_agent(r)))?;
@@ -93,8 +105,11 @@ fn row_to_agent(row: &rusqlite::Row<'_>) -> Result<Agent, StoreError> {
     let pane_tab: Option<u32> = row.get(6)?;
     let pane_id_col: Option<u32> = row.get(7)?;
     let restart_count: u32 = row.get(8)?;
-    let metadata_json: String = row.get(9)?;
-    let at_ms: i64 = row.get(10)?;
+    let cwd: Option<String> = row.get(9)?;
+    let project_root: Option<String> = row.get(10)?;
+    let branch: Option<String> = row.get(11)?;
+    let metadata_json: String = row.get(12)?;
+    let at_ms: i64 = row.get(13)?;
 
     let metadata: HashMap<CompactString, serde_json::Value> = serde_json::from_str(&metadata_json)?;
 
@@ -107,6 +122,9 @@ fn row_to_agent(row: &rusqlite::Row<'_>) -> Result<Agent, StoreError> {
         pane_ref: pane_ref_from_row(pane_session, pane_tab, pane_id_col),
         pane_id: None,
         restart_count,
+        cwd: cwd.map(std::path::PathBuf::from),
+        project_root: project_root.map(std::path::PathBuf::from),
+        branch: branch.map(CompactString::from),
         metadata,
         created_at: Timestamp::from_millis(at_ms as u64),
     })

@@ -168,10 +168,19 @@ impl RallyService {
         workspace_id: WorkspaceId,
         role: CompactString,
         runtime: CompactString,
+        cwd: Option<std::path::PathBuf>,
     ) -> anyhow::Result<AgentView> {
         let id = self.id_gen.next_agent_id();
         let at = self.clock.now();
-        let agent = Agent::new(id, workspace_id, role.clone(), runtime.clone(), at);
+        let mut agent = Agent::new(id, workspace_id, role.clone(), runtime.clone(), at);
+
+        if let Some(ref cwd_path) = cwd {
+            agent.cwd = Some(cwd_path.clone());
+            if let Some(git_info) = crate::git::discover(cwd_path) {
+                agent.project_root = Some(git_info.project_root);
+                agent.branch = git_info.branch;
+            }
+        }
 
         let event = DomainEvent::AgentRegistered {
             id,
@@ -199,6 +208,9 @@ impl RallyService {
             restart_count: 0,
             pane_session: None,
             pane_id: None,
+            cwd: None,
+            project_root: None,
+            branch: None,
             created_at: at.as_millis(),
         })
     }
@@ -311,6 +323,9 @@ fn agent_to_view(a: &Agent) -> AgentView {
         restart_count: a.restart_count,
         pane_session: a.pane_ref.as_ref().map(|p| p.session_name.clone()),
         pane_id: a.pane_ref.as_ref().map(|p| p.pane_id),
+        cwd: a.cwd.clone(),
+        project_root: a.project_root.clone(),
+        branch: a.branch.clone(),
         created_at: a.created_at.as_millis(),
     }
 }

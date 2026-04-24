@@ -147,6 +147,9 @@ mod tests {
             state: state.to_string(),
             pane_session: None,
             pane_id: None,
+            cwd: None,
+            project_root: None,
+            branch: None,
         }
     }
 

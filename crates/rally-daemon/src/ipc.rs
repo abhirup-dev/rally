@@ -150,8 +150,9 @@ fn dispatch(service: &RallyService, request: Request) -> anyhow::Result<Response
             workspace_id,
             role,
             runtime,
+            cwd,
         } => {
-            let view = service.register_agent(workspace_id, role, runtime)?;
+            let view = service.register_agent(workspace_id, role, runtime, cwd)?;
             Ok(Response::Agent(view))
         }
         Request::GetAgent { id } => match service.get_agent(id)? {
