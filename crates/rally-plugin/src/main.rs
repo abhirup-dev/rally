@@ -12,7 +12,6 @@ use zellij_widgets::prelude::{Line, Modifier, Paragraph, PluginPane, Span, Style
 
 mod widgets;
 
-#[derive(Default)]
 struct RallyPlugin {
     workspaces: Vec<WorkspaceInfo>,
     agents: Vec<AgentInfo>,
@@ -27,13 +26,35 @@ struct RallyPlugin {
     ui_version: u64,
     permission_denied: bool,
     last_error: Option<String>,
+    rally_cli_path: String,
+}
+
+impl Default for RallyPlugin {
+    fn default() -> Self {
+        Self {
+            workspaces: Vec::new(),
+            agents: Vec::new(),
+            inbox_items: Vec::new(),
+            state_version: None,
+            show_inbox_detail: false,
+            show_help: false,
+            filter_mode: false,
+            filter: String::new(),
+            selected_agent_id: None,
+            status_message: None,
+            ui_version: 0,
+            permission_denied: false,
+            last_error: None,
+            rally_cli_path: "rally".to_string(),
+        }
+    }
 }
 
 #[cfg(not(test))]
 register_plugin!(RallyPlugin);
 
 impl ZellijPlugin for RallyPlugin {
-    fn load(&mut self, _config: BTreeMap<String, String>) {
+    fn load(&mut self, config: BTreeMap<String, String>) {
         request_permission(&[
             PermissionType::RunCommands,
             PermissionType::ReadApplicationState,
@@ -44,6 +65,11 @@ impl ZellijPlugin for RallyPlugin {
             EventType::Timer,
             EventType::Key,
         ]);
+
+        // Layout config can override the CLI path (e.g. for dev builds).
+        if let Some(cli_path) = config.get("rally_cli_path") {
+            self.rally_cli_path = cli_path.clone();
+        }
     }
 
     fn update(&mut self, event: Event) -> bool {
@@ -197,7 +223,7 @@ impl RallyPlugin {
     fn refresh_state(&self) {
         let mut ctx = BTreeMap::new();
         ctx.insert("type".to_string(), "state_snapshot".to_string());
-        run_command(&["rally", "--json", "_plugin-state"], ctx);
+        run_command(&[&self.rally_cli_path, "--json", "_plugin-state"], ctx);
     }
 
     fn render_to_string(&self, rows: usize, cols: usize) -> String {
