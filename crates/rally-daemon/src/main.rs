@@ -1,3 +1,5 @@
+#![deny(unsafe_code)]
+
 mod ipc;
 mod services;
 mod tracing_init;
@@ -42,7 +44,7 @@ async fn run() -> anyhow::Result<()> {
     info!(db = %db_path.display(), "store opened");
 
     let event_bus = EventBus::new();
-    let service = Arc::new(services::RallyService::new(store, event_bus));
+    let service = Arc::new(services::RallyService::new(store, event_bus)?);
 
     // Bind unix socket
     let listener = tokio::net::UnixListener::bind(&socket_path)?;

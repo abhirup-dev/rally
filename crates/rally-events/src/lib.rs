@@ -1,3 +1,5 @@
+#![deny(unsafe_code)]
+
 use std::sync::Arc;
 
 use arc_swap::ArcSwap;
@@ -10,19 +12,10 @@ pub type StateVersion = u64;
 
 /// A snapshot of the latest domain state, published via `arc-swap` for
 /// lock-free reads (sidebar plugin, MCP list queries).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct StateSnapshot {
     pub version: StateVersion,
     pub events_since_last: Vec<DomainEvent>,
-}
-
-impl Default for StateSnapshot {
-    fn default() -> Self {
-        Self {
-            version: 0,
-            events_since_last: Vec::new(),
-        }
-    }
 }
 
 /// The event bus — fan-out domain events to subscribers + maintain a
@@ -57,14 +50,8 @@ impl EventBus {
             events_since_last: vec![event.clone()],
         }));
 
-        // Broadcast to live subscribers
-        match self.tx.send(event) {
-            Ok(n) => n,
-            Err(_) => {
-                // No active receivers — not an error, just no one listening
-                0
-            }
-        }
+        // Broadcast to live subscribers. Err means no active receivers — not an error.
+        self.tx.send(event).unwrap_or_default()
     }
 
     /// Subscribe to live domain events.

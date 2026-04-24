@@ -13,6 +13,8 @@ rally-proto       = { workspace = true }
 rally-store       = { workspace = true }
 rally-events      = { workspace = true }
 rally-config      = { workspace = true }
+arc-swap           = "1"
+futures            = { version = "0.3", default-features = false, features = ["std"] }
 rally-capture     = { workspace = true }
 rally-hooks       = { workspace = true }
 rally-inbox       = { workspace = true }

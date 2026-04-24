@@ -190,7 +190,7 @@ fn migrate(conn: &Connection) -> Result<(), StoreError> {
         })?;
     }
 
-    if version >= 1 && version < 2 {
+    if (1..2).contains(&version) {
         info!(
             migration_version = 2,
             "applying migration v2 (canonical_key + aliases)"

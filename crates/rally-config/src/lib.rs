@@ -1,3 +1,5 @@
+#![deny(unsafe_code)]
+
 mod jsonc;
 
 use std::path::{Path, PathBuf};
@@ -22,7 +24,7 @@ pub enum ConfigError {
 // Top-level config
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct RallyConfig {
     pub daemon: DaemonConfig,
@@ -30,18 +32,6 @@ pub struct RallyConfig {
     pub worktree: WorktreeConfig,
     pub mcp: McpConfig,
     pub capture: CaptureConfig,
-}
-
-impl Default for RallyConfig {
-    fn default() -> Self {
-        Self {
-            daemon: DaemonConfig::default(),
-            zellij: ZellijConfig::default(),
-            worktree: WorktreeConfig::default(),
-            mcp: McpConfig::default(),
-            capture: CaptureConfig::default(),
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------

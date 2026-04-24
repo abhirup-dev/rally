@@ -1,3 +1,5 @@
+#![deny(unsafe_code)]
+
 pub mod harness;
 
 use std::collections::HashMap;

@@ -1,3 +1,5 @@
+#![deny(unsafe_code)]
+
 mod ipc_client;
 mod tracing_init;
 
@@ -505,9 +507,8 @@ async fn connect(socket_path: &std::path::Path) -> anyhow::Result<IpcClient> {
         Err(_) => {
             eprintln!("rally: daemon not running, starting rallyd...");
             autostart_daemon(socket_path)?;
-            IpcClient::connect(socket_path).await.map_err(|e| {
+            IpcClient::connect(socket_path).await.inspect_err(|_| {
                 eprintln!("rally: still cannot connect after autostart");
-                e
             })
         }
     }

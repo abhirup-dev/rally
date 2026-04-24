@@ -1,11 +1,17 @@
 use std::sync::Arc;
+use std::time::Duration;
 
+use futures::StreamExt;
 use rally_proto::v1::{Request, RequestEnvelope, Response, ResponseEnvelope};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::AsyncWriteExt;
 use tokio::net::{UnixListener, UnixStream};
+use tokio_util::codec::{FramedRead, LinesCodec};
 use tracing::{debug, error, info, info_span, warn, Instrument};
 
 use crate::services::RallyService;
+
+const MAX_FRAME_BYTES: usize = 1024 * 1024; // 1 MB — prevents OOM from malformed clients
+const IPC_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Run the IPC server loop. Accepts connections on the unix socket and
 /// dispatches each to a per-connection handler.
@@ -29,13 +35,23 @@ pub async fn serve(listener: UnixListener, service: Arc<RallyService>) {
     }
 }
 
-/// Handle a single client connection. Reads newline-delimited JSON requests,
-/// dispatches to the service, writes newline-delimited JSON responses.
+/// Handle a single client connection. Reads newline-delimited JSON requests
+/// (bounded to MAX_FRAME_BYTES), dispatches each with a 5s timeout, writes
+/// newline-delimited JSON responses.
 async fn handle_connection(stream: UnixStream, service: Arc<RallyService>) -> anyhow::Result<()> {
     let (reader, mut writer) = stream.into_split();
-    let mut lines = BufReader::new(reader).lines();
+    let codec = LinesCodec::new_with_max_length(MAX_FRAME_BYTES);
+    let mut framed = FramedRead::new(reader, codec);
 
-    while let Some(line) = lines.next_line().await? {
+    while let Some(result) = framed.next().await {
+        let line = match result {
+            Ok(l) => l,
+            Err(e) => {
+                warn!(error = %e, "frame error — closing connection");
+                break;
+            }
+        };
+
         let envelope: RequestEnvelope = match serde_json::from_str(&line) {
             Ok(env) => env,
             Err(e) => {
@@ -65,24 +81,41 @@ async fn handle_connection(stream: UnixStream, service: Arc<RallyService>) -> an
         );
 
         let started = std::time::Instant::now();
-        let response = async {
-            debug!("request_in");
-            let result = dispatch(&service, envelope.payload);
-            let duration_ms = started.elapsed().as_millis() as u64;
-            match &result {
-                Ok(_) => debug!(duration_ms, "response_out"),
-                Err(e) => warn!(duration_ms, error = %e, "request failed"),
-            }
-            result
-        }
+        let svc = Arc::clone(&service);
+        let request = envelope.payload;
+
+        debug!(parent: &span, "request_in");
+        let dispatch_result = tokio::time::timeout(
+            IPC_TIMEOUT,
+            tokio::task::spawn_blocking(move || dispatch(&svc, request)),
+        )
         .instrument(span)
         .await;
 
-        let payload = match response {
-            Ok(r) => r,
-            Err(e) => Response::Error {
-                message: e.to_string(),
-            },
+        let duration_ms = started.elapsed().as_millis() as u64;
+        let payload = match dispatch_result {
+            Err(_elapsed) => {
+                warn!(duration_ms, method, "request timed out after 5s");
+                Response::Error {
+                    message: "request timed out".into(),
+                }
+            }
+            Ok(Err(join_err)) => {
+                warn!(duration_ms, error = %join_err, "handler panicked");
+                Response::Error {
+                    message: "internal error: handler panicked".to_string(),
+                }
+            }
+            Ok(Ok(Ok(resp))) => {
+                debug!(duration_ms, "response_out");
+                resp
+            }
+            Ok(Ok(Err(e))) => {
+                warn!(duration_ms, error = %e, "request failed");
+                Response::Error {
+                    message: e.to_string(),
+                }
+            }
         };
 
         let resp_envelope = ResponseEnvelope {
@@ -143,10 +176,7 @@ fn dispatch(service: &RallyService, request: Request) -> anyhow::Result<Response
         Request::AckInboxItem { .. } => Ok(Response::Error {
             message: "ack not yet implemented".into(),
         }),
-        Request::GetStateSnapshot => {
-            let snapshot = service.state_snapshot()?;
-            Ok(Response::StateSnapshot(snapshot))
-        }
+        Request::GetStateSnapshot => Ok(Response::StateSnapshot(service.state_snapshot())),
         Request::BindPane {
             agent_id,
             session_name,

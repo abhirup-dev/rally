@@ -170,7 +170,7 @@ pub fn event_to_stored(e: &DomainEvent) -> StoredEvent {
             workspace_id: "".into(),
             kind: "InboxItemRaised".into(),
             payload: json!({ "id": inbox_id_to_str(*id),
-                             "agent": agent.map(|a| agent_id_to_str(a)),
+                             "agent": agent.map(agent_id_to_str),
                              "urgency": urgency_to_str(*urgency),
                              "kind": format!("{kind:?}") }),
             at_ms: at.as_millis(),

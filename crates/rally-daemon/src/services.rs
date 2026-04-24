@@ -1,6 +1,7 @@
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
+use arc_swap::ArcSwap;
 use compact_str::CompactString;
 use rally_core::agent::Agent;
 use rally_core::event::DomainEvent;
@@ -10,7 +11,7 @@ use rally_core::workspace::Workspace;
 use rally_events::EventBus;
 use rally_proto::v1::{AgentView, StateSnapshotView, WorkspaceView};
 use rally_store::Store;
-use tracing::{info, instrument};
+use tracing::{info, instrument, warn};
 use ulid::Ulid;
 
 pub struct SystemClock;
@@ -50,16 +51,66 @@ pub struct RallyService {
     pub clock: SystemClock,
     pub id_gen: UlidIdGen,
     pub event_bus: EventBus,
+    snapshot: Arc<ArcSwap<StateSnapshotView>>,
 }
 
 impl RallyService {
-    pub fn new(store: Store, event_bus: EventBus) -> Self {
-        Self {
+    pub fn new(store: Store, event_bus: EventBus) -> anyhow::Result<Self> {
+        let svc = Self {
             store: Mutex::new(store),
             clock: SystemClock,
             id_gen: UlidIdGen,
             event_bus,
+            snapshot: Arc::new(ArcSwap::from_pointee(StateSnapshotView {
+                version: 0,
+                workspaces: Vec::new(),
+                agents: Vec::new(),
+                inbox_items: Vec::new(),
+            })),
+        };
+        // Pre-populate snapshot from existing store contents.
+        svc.refresh_snapshot();
+        Ok(svc)
+    }
+
+    /// Rebuild the cached StateSnapshotView from SQLite and swap it in.
+    /// Called after every write that changes domain state.
+    fn refresh_snapshot(&self) {
+        let store = self.store.lock().unwrap();
+        let workspace_list = match WorkspaceRepo::list(&*store) {
+            Ok(ws) => ws,
+            Err(e) => {
+                warn!(error = %e, "refresh_snapshot: failed to list workspaces");
+                return;
+            }
+        };
+        let mut all_agents: Vec<Agent> = Vec::new();
+        for ws in &workspace_list {
+            match AgentRepo::list_by_workspace(&*store, ws.id) {
+                Ok(agents) => all_agents.extend(agents),
+                Err(e) => {
+                    warn!(error = %e, workspace_id = %ws.id, "refresh_snapshot: failed to list agents");
+                    return;
+                }
+            }
         }
+        let workspaces = workspace_list.iter().map(ws_to_view).collect();
+        let agents = all_agents.iter().map(agent_to_view).collect();
+        drop(store);
+
+        let version = self.event_bus.version();
+        self.snapshot.store(Arc::new(StateSnapshotView {
+            version,
+            workspaces,
+            agents,
+            inbox_items: Vec::new(),
+        }));
+    }
+
+    /// Publish a domain event and refresh the cached snapshot.
+    fn publish_event(&self, event: DomainEvent) {
+        self.event_bus.publish(event);
+        self.refresh_snapshot();
     }
 
     #[instrument(skip(self), fields(name = %name))]
@@ -86,7 +137,7 @@ impl RallyService {
             .map_err(|e| anyhow::anyhow!("{e}"))?;
         drop(store);
 
-        self.event_bus.publish(event);
+        self.publish_event(event);
         info!(%id, %name, %canonical_key, "workspace created");
 
         Ok(WorkspaceView {
@@ -136,7 +187,7 @@ impl RallyService {
             .map_err(|e| anyhow::anyhow!("{e}"))?;
         drop(store);
 
-        self.event_bus.publish(event);
+        self.publish_event(event);
         info!(%id, %workspace_id, %role, %runtime, "agent registered");
 
         Ok(AgentView {
@@ -180,7 +231,7 @@ impl RallyService {
             .save_agent_and_event(&updated, &event)
             .map_err(|e| anyhow::anyhow!("{e}"))?;
         drop(store);
-        self.event_bus.publish(event);
+        self.publish_event(event);
         info!(%agent_id, %session_name, pane_id, "pane bound to agent");
         Ok(())
     }
@@ -208,13 +259,9 @@ impl RallyService {
         Ok(agents.iter().map(agent_to_view).collect())
     }
 
-    pub fn state_snapshot(&self) -> anyhow::Result<StateSnapshotView> {
-        Ok(StateSnapshotView {
-            version: self.event_bus.version(),
-            workspaces: self.list_workspaces()?,
-            agents: self.list_agents(None)?,
-            inbox_items: Vec::new(),
-        })
+    /// Return the latest state snapshot (O(1) — reads from ArcSwap, no SQLite).
+    pub fn state_snapshot(&self) -> StateSnapshotView {
+        self.snapshot.load_full().as_ref().clone()
     }
 
     pub fn set_alias(&self, alias: &str, workspace_id: WorkspaceId) -> anyhow::Result<()> {
