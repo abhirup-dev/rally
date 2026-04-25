@@ -1,9 +1,11 @@
 use std::borrow::Cow;
 use std::collections::HashSet;
 
-use crate::theme::state_theme;
+use crate::theme::{bare_terminal_theme, state_theme};
 
 use super::{truncate_chars, AgentInfo, TreeNode, WorkspaceInfo};
+use std::collections::BTreeMap;
+use std::path::PathBuf;
 use zellij_widgets::prelude::*;
 
 /// Render the visible tree nodes as styled lines with tree connectors.
@@ -16,29 +18,46 @@ pub fn render_tree_lines(
     collapsed: &HashSet<String>,
     visible_nodes: &[TreeNode],
     selected: Option<&TreeNode>,
+    pane_cwds: &BTreeMap<u32, PathBuf>,
     cols: usize,
 ) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
 
     for (i, node) in visible_nodes.iter().enumerate() {
         let is_selected = selected == Some(node);
+        // A child node is "last" if the next node is a parent-level node or end-of-list.
+        let next_is_parent_or_end = matches!(
+            visible_nodes.get(i + 1),
+            None | Some(TreeNode::Workspace { .. }) | Some(TreeNode::Tab { .. })
+        );
         let line = match node {
             TreeNode::Workspace { id } => {
                 workspace_line(id, workspaces, agents, collapsed, cols, is_selected)
             }
-            TreeNode::Agent { id, workspace_id } => {
-                // Last agent under this workspace = next node belongs to a different workspace (or end).
-                let is_last = !matches!(
-                    visible_nodes.get(i + 1),
-                    Some(TreeNode::Agent { workspace_id: nw, .. }) if nw == workspace_id
-                );
-                agent_line(
-                    id,
-                    agents,
-                    if is_last { "└──" } else { "├──" },
-                    cols,
-                    is_selected,
-                )
+            TreeNode::Tab { name, position } => {
+                let is_collapsed = collapsed.contains(&format!("tab:{position}"));
+                tab_line(name, is_collapsed, cols, is_selected)
+            }
+            TreeNode::Pane { id, .. } => {
+                let connector = if next_is_parent_or_end {
+                    "└──"
+                } else {
+                    "├──"
+                };
+                let cwd = pane_cwds.get(id).and_then(|p| {
+                    p.file_name()
+                        .and_then(|n| n.to_str())
+                        .map(|s| s.to_string())
+                });
+                pane_line(*id, cwd.as_deref(), connector, cols, is_selected)
+            }
+            TreeNode::Agent { id, .. } => {
+                let connector = if next_is_parent_or_end {
+                    "└──"
+                } else {
+                    "├──"
+                };
+                agent_line(id, agents, connector, cols, is_selected)
             }
         };
         lines.push(line);
@@ -123,6 +142,52 @@ fn agent_line(
         Span::styled(glyph, glyph_style),
         Span::raw(" "),
         Span::raw(truncate_chars(&agent.role, max_role)),
+        Span::styled(suffix, Style::default().add_modifier(Modifier::DIM)),
+    ];
+
+    styled_line(spans, selected)
+}
+
+fn tab_line(name: &str, is_collapsed: bool, cols: usize, selected: bool) -> Line<'static> {
+    let glyph = if is_collapsed { "▶" } else { "▼" };
+    let max_name = cols.saturating_sub(3).max(1);
+    let spans = vec![
+        Span::styled(
+            glyph,
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" "),
+        Span::styled(
+            truncate_chars(name, max_name),
+            Style::default().add_modifier(Modifier::BOLD),
+        ),
+    ];
+    styled_line(spans, selected)
+}
+
+fn pane_line(
+    pane_id: u32,
+    cwd_name: Option<&str>,
+    connector: &'static str,
+    cols: usize,
+    selected: bool,
+) -> Line<'static> {
+    let theme = bare_terminal_theme();
+    let label = cwd_name.unwrap_or("terminal");
+    let suffix = format!(" p:{pane_id}");
+
+    let prefix_len = 7usize;
+    let max_label = cols
+        .saturating_sub(prefix_len + suffix.chars().count())
+        .max(1);
+
+    let spans = vec![
+        Span::raw(format!(" {connector} ")),
+        Span::styled(theme.glyph, theme.style),
+        Span::raw(" "),
+        Span::raw(truncate_chars(label, max_label)),
         Span::styled(suffix, Style::default().add_modifier(Modifier::DIM)),
     ];
 
@@ -218,7 +283,7 @@ mod tests {
             },
         ];
 
-        let lines = render_tree_lines(&workspaces, &agents, &collapsed, &visible_nodes, None, 40);
+        let lines = render_tree_lines(&workspaces, &agents, &collapsed, &visible_nodes, None, &BTreeMap::new(), 40);
         let text = lines_text(&lines);
 
         assert!(text.contains("▼ api"), "expanded workspace glyph");
@@ -240,7 +305,7 @@ mod tests {
             id: "w1".to_string(),
         }];
 
-        let lines = render_tree_lines(&workspaces, &agents, &collapsed, &visible_nodes, None, 40);
+        let lines = render_tree_lines(&workspaces, &agents, &collapsed, &visible_nodes, None, &BTreeMap::new(), 40);
         let text = lines_text(&lines);
 
         assert!(text.contains("▶ api"), "collapsed workspace glyph");
@@ -256,7 +321,7 @@ mod tests {
             id: "w1".to_string(),
         }];
 
-        let lines = render_tree_lines(&workspaces, &agents, &collapsed, &visible_nodes, None, 40);
+        let lines = render_tree_lines(&workspaces, &agents, &collapsed, &visible_nodes, None, &BTreeMap::new(), 40);
         let text = lines_text(&lines);
 
         assert!(text.contains("◆ api"), "empty workspace uses diamond");
@@ -284,6 +349,7 @@ mod tests {
             &collapsed,
             &visible_nodes,
             Some(selected),
+            &BTreeMap::new(),
             40,
         );
 

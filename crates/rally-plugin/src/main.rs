@@ -1,6 +1,7 @@
 #![deny(unsafe_code)]
 
 use std::collections::{BTreeMap, HashSet};
+use std::path::PathBuf;
 
 use serde::Deserialize;
 use theme::state_theme;
@@ -19,6 +20,8 @@ mod widgets;
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Selection {
     Workspace(String),
+    Tab(usize),
+    Pane(u32),
     Agent(String),
 }
 
@@ -26,6 +29,8 @@ impl Selection {
     fn matches_node(&self, node: &TreeNode) -> bool {
         match (self, node) {
             (Selection::Workspace(id), TreeNode::Workspace { id: nid }) => id == nid,
+            (Selection::Tab(pos), TreeNode::Tab { position, .. }) => pos == position,
+            (Selection::Pane(id), TreeNode::Pane { id: nid, .. }) => id == nid,
             (Selection::Agent(id), TreeNode::Agent { id: nid, .. }) => id == nid,
             _ => false,
         }
@@ -35,8 +40,31 @@ impl Selection {
 fn node_to_selection(node: &TreeNode) -> Selection {
     match node {
         TreeNode::Workspace { id } => Selection::Workspace(id.clone()),
+        TreeNode::Tab { position, .. } => Selection::Tab(*position),
+        TreeNode::Pane { id, .. } => Selection::Pane(*id),
         TreeNode::Agent { id, .. } => Selection::Agent(id.clone()),
     }
+}
+
+/// Minimal tab info kept from Zellij's TabUpdate event.
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+struct ZellijTab {
+    position: usize,
+    name: String,
+    active: bool,
+}
+
+/// Minimal pane info kept from Zellij's PaneUpdate event.
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+struct ZellijPane {
+    id: u32,
+    tab_position: usize,
+    is_plugin: bool,
+    is_floating: bool,
+    is_selectable: bool,
+    title: String,
 }
 
 struct RallyPlugin {
@@ -50,8 +78,8 @@ struct RallyPlugin {
     filter: String,
     /// Stable-key selection — never a raw index.
     selection: Option<Selection>,
-    /// Workspace IDs that the user has explicitly collapsed.
-    collapsed_workspaces: HashSet<String>,
+    /// Node IDs that the user has explicitly collapsed (workspace IDs, tab keys).
+    collapsed: HashSet<String>,
     /// First visible tree-row index (updated each render() to keep selection in view).
     scroll_offset: usize,
     status_message: Option<String>,
@@ -59,6 +87,12 @@ struct RallyPlugin {
     permission_denied: bool,
     last_error: Option<String>,
     rally_cli_path: String,
+    /// Tabs in the current Zellij session (from TabUpdate events).
+    tabs: Vec<ZellijTab>,
+    /// Tiled, selectable, non-plugin panes in the current session (from PaneUpdate events).
+    panes: Vec<ZellijPane>,
+    /// CWD for each terminal pane (from CwdChanged events). Key = pane_id.
+    pane_cwds: BTreeMap<u32, PathBuf>,
 }
 
 impl Default for RallyPlugin {
@@ -73,13 +107,16 @@ impl Default for RallyPlugin {
             filter_mode: false,
             filter: String::new(),
             selection: None,
-            collapsed_workspaces: HashSet::new(),
+            collapsed: HashSet::new(),
             scroll_offset: 0,
             status_message: None,
             ui_version: 0,
             permission_denied: false,
             last_error: None,
             rally_cli_path: "rally".to_string(),
+            tabs: Vec::new(),
+            panes: Vec::new(),
+            pane_cwds: BTreeMap::new(),
         }
     }
 }
@@ -99,6 +136,8 @@ impl ZellijPlugin for RallyPlugin {
             EventType::Timer,
             EventType::Key,
             EventType::CwdChanged,
+            EventType::TabUpdate,
+            EventType::PaneUpdate,
         ]);
 
         if let Some(cli_path) = config.get("rally_cli_path") {
@@ -129,6 +168,43 @@ impl ZellijPlugin for RallyPlugin {
                     self.ui_version = self.ui_version.saturating_add(1);
                 }
                 changed
+            }
+            Event::TabUpdate(tab_infos) => {
+                self.tabs = tab_infos
+                    .into_iter()
+                    .map(|t| ZellijTab {
+                        position: t.position,
+                        name: t.name,
+                        active: t.active,
+                    })
+                    .collect();
+                self.tabs.sort_by_key(|t| t.position);
+                true
+            }
+            Event::PaneUpdate(manifest) => {
+                self.panes = manifest
+                    .panes
+                    .into_iter()
+                    .flat_map(|(tab_pos, pane_infos)| {
+                        pane_infos.into_iter().filter_map(move |p| {
+                            if p.is_plugin || p.is_floating || p.is_suppressed || !p.is_selectable
+                            {
+                                return None;
+                            }
+                            Some(ZellijPane {
+                                id: p.id,
+                                tab_position: tab_pos,
+                                is_plugin: p.is_plugin,
+                                is_floating: p.is_floating,
+                                is_selectable: p.is_selectable,
+                                title: p.title,
+                            })
+                        })
+                    })
+                    .collect();
+                self.panes.sort_by_key(|p| (p.tab_position, p.id));
+                self.ensure_selection();
+                true
             }
             Event::CwdChanged(PaneId::Terminal(pane_id), new_cwd, _clients) => {
                 self.handle_cwd_changed(pane_id, new_cwd);
@@ -218,7 +294,10 @@ impl RallyPlugin {
         run_command(&[&self.rally_cli_path, "--json", "_plugin-state"], ctx);
     }
 
-    fn handle_cwd_changed(&self, pane_id: u32, new_cwd: std::path::PathBuf) {
+    fn handle_cwd_changed(&mut self, pane_id: u32, new_cwd: std::path::PathBuf) {
+        // Track CWD for all terminal panes (used by action menu for bare terminals).
+        self.pane_cwds.insert(pane_id, new_cwd.clone());
+
         let agent = self.agents.iter().find(|a| a.pane_id == Some(pane_id));
         if let Some(agent) = agent {
             let mut ctx = BTreeMap::new();
@@ -241,33 +320,67 @@ impl RallyPlugin {
 
     // ── Tree model ────────────────────────────────────────────────────────
 
-    /// Flatten workspace→agent hierarchy into the ordered list of visible nodes,
-    /// respecting collapsed state. If a filter is active and a collapsed workspace
-    /// contains matching agents it is auto-expanded so the matches are reachable.
+    /// Build the ordered list of visible tree nodes, respecting collapsed state.
+    /// If Zellij tab/pane data is available, shows Tab → Pane/Agent hierarchy.
+    /// Otherwise falls back to daemon-only Workspace → Agent view.
     fn visible_tree_nodes(&self) -> Vec<TreeNode> {
         let mut nodes = Vec::new();
-        for ws in &self.workspaces {
-            nodes.push(TreeNode::Workspace { id: ws.id.clone() });
 
-            let workspace_agents: Vec<&AgentInfo> = self
-                .agents
-                .iter()
-                .filter(|a| a.workspace_id == ws.id && self.agent_matches_filter(a))
-                .collect();
+        if !self.tabs.is_empty() {
+            // Zellij-native view: Tab → Pane (with agent overlay).
+            for tab in &self.tabs {
+                nodes.push(TreeNode::Tab {
+                    position: tab.position,
+                    name: tab.name.clone(),
+                });
 
-            let is_collapsed = self.collapsed_workspaces.contains(&ws.id);
-            // Auto-expand if filter would surface agents inside a collapsed workspace.
-            let filter_forces_expand = !self.filter.is_empty() && !workspace_agents.is_empty();
+                let tab_key = format!("tab:{}", tab.position);
+                if self.collapsed.contains(&tab_key) {
+                    continue;
+                }
 
-            if !is_collapsed || filter_forces_expand {
-                for agent in workspace_agents {
-                    nodes.push(TreeNode::Agent {
-                        id: agent.id.clone(),
-                        workspace_id: ws.id.clone(),
-                    });
+                for pane in self.panes.iter().filter(|p| p.tab_position == tab.position) {
+                    if let Some(agent) = self.agents.iter().find(|a| a.pane_id == Some(pane.id)) {
+                        if self.agent_matches_filter(agent) {
+                            nodes.push(TreeNode::Agent {
+                                id: agent.id.clone(),
+                                workspace_id: agent.workspace_id.clone(),
+                            });
+                        }
+                    } else {
+                        nodes.push(TreeNode::Pane {
+                            id: pane.id,
+                            tab_position: pane.tab_position,
+                        });
+                    }
+                }
+            }
+        } else {
+            // Fallback: daemon-only view (before TabUpdate fires).
+            for ws in &self.workspaces {
+                nodes.push(TreeNode::Workspace { id: ws.id.clone() });
+
+                let workspace_agents: Vec<&AgentInfo> = self
+                    .agents
+                    .iter()
+                    .filter(|a| a.workspace_id == ws.id && self.agent_matches_filter(a))
+                    .collect();
+
+                let is_collapsed = self.collapsed.contains(&ws.id);
+                let filter_forces_expand =
+                    !self.filter.is_empty() && !workspace_agents.is_empty();
+
+                if !is_collapsed || filter_forces_expand {
+                    for agent in workspace_agents {
+                        nodes.push(TreeNode::Agent {
+                            id: agent.id.clone(),
+                            workspace_id: ws.id.clone(),
+                        });
+                    }
                 }
             }
         }
+
         nodes
     }
 
@@ -320,35 +433,78 @@ impl RallyPlugin {
         self.selection = Some(node_to_selection(&nodes[next]));
     }
 
-    /// h — collapse workspace (or move to parent and collapse if on an agent).
+    /// h — collapse parent node, or move to parent if already a leaf.
     fn handle_collapse(&mut self) {
         match self.selection.clone() {
+            Some(Selection::Tab(pos)) => {
+                self.collapsed.insert(format!("tab:{pos}"));
+            }
             Some(Selection::Workspace(ws_id)) => {
-                self.collapsed_workspaces.insert(ws_id);
+                self.collapsed.insert(ws_id);
+            }
+            Some(Selection::Pane(pane_id)) => {
+                // Move to parent tab and collapse it.
+                if let Some(pane) = self.panes.iter().find(|p| p.id == pane_id) {
+                    let tab_pos = pane.tab_position;
+                    self.selection = Some(Selection::Tab(tab_pos));
+                    self.collapsed.insert(format!("tab:{tab_pos}"));
+                }
             }
             Some(Selection::Agent(agent_id)) => {
-                let ws_id = self
-                    .agents
-                    .iter()
-                    .find(|a| a.id == agent_id)
-                    .map(|a| a.workspace_id.clone());
-                if let Some(ws_id) = ws_id {
-                    self.selection = Some(Selection::Workspace(ws_id.clone()));
-                    self.collapsed_workspaces.insert(ws_id);
+                // Move to parent: tab (if in tab view) or workspace (if in daemon view).
+                let agent = self.agents.iter().find(|a| a.id == agent_id);
+                if let Some(agent) = agent {
+                    if !self.tabs.is_empty() {
+                        // Tab view: find parent tab via agent pane_id.
+                        if let Some(pane) = agent
+                            .pane_id
+                            .and_then(|pid| self.panes.iter().find(|p| p.id == pid))
+                        {
+                            let tab_pos = pane.tab_position;
+                            self.selection = Some(Selection::Tab(tab_pos));
+                            self.collapsed.insert(format!("tab:{tab_pos}"));
+                        }
+                    } else {
+                        let ws_id = agent.workspace_id.clone();
+                        self.selection = Some(Selection::Workspace(ws_id.clone()));
+                        self.collapsed.insert(ws_id);
+                    }
                 }
             }
             None => {}
         }
     }
 
-    /// l — expand workspace if collapsed, else move into first child agent.
+    /// l — expand node if collapsed, else descend to first child.
     fn handle_expand(&mut self) {
         match self.selection.clone() {
-            Some(Selection::Workspace(ws_id)) => {
-                if self.collapsed_workspaces.remove(&ws_id) {
-                    // Was collapsed; expanding is the action — stay on workspace node.
+            Some(Selection::Tab(pos)) => {
+                let key = format!("tab:{pos}");
+                if self.collapsed.remove(&key) {
+                    // Was collapsed; expanding is the action.
                 } else {
                     // Already expanded: descend into first visible child.
+                    let nodes = self.visible_tree_nodes();
+                    let first_child = nodes.iter().find(|n| match n {
+                        TreeNode::Pane { tab_position, .. } if *tab_position == pos => true,
+                        TreeNode::Agent { id, .. } => self
+                            .agents
+                            .iter()
+                            .find(|a| a.id == *id)
+                            .and_then(|a| a.pane_id)
+                            .and_then(|pid| self.panes.iter().find(|p| p.id == pid))
+                            .is_some_and(|p| p.tab_position == pos),
+                        _ => false,
+                    });
+                    if let Some(child) = first_child {
+                        self.selection = Some(node_to_selection(child));
+                    }
+                }
+            }
+            Some(Selection::Workspace(ws_id)) => {
+                if self.collapsed.remove(&ws_id) {
+                    // Was collapsed; expanding is the action.
+                } else {
                     let first_child = self
                         .agents
                         .iter()
@@ -359,8 +515,8 @@ impl RallyPlugin {
                     }
                 }
             }
-            Some(Selection::Agent(_)) => {
-                // Leaf node — nothing to expand.
+            Some(Selection::Agent(_) | Selection::Pane(_)) => {
+                // Leaf nodes — nothing to expand.
             }
             None => {}
         }
@@ -451,9 +607,10 @@ impl RallyPlugin {
         let all_tree_lines = render_tree_lines(
             &self.workspaces,
             &self.agents,
-            &self.collapsed_workspaces,
+            &self.collapsed,
             &visible_nodes,
             selected_node,
+            &self.pane_cwds,
             cols,
         );
 
@@ -523,7 +680,8 @@ impl RallyPlugin {
                 true
             }
             BareKey::Char('f') => self.handle_focus(),
-            BareKey::Char('a') => self.action_feedback("ack"),
+            BareKey::Char('a') => self.action_feedback("action"),
+            BareKey::Char('K') => self.action_feedback("ack"),
             BareKey::Char('r') => self.action_feedback("restart"),
             BareKey::Char('s') => self.action_feedback("spawn"),
             BareKey::Esc => {
@@ -571,6 +729,11 @@ impl RallyPlugin {
 
     fn handle_focus(&mut self) -> bool {
         match self.selection.clone() {
+            Some(Selection::Pane(pane_id)) => {
+                zellij_focus_pane(pane_id);
+                self.status_message = None;
+                true
+            }
             Some(Selection::Agent(id)) => {
                 if let Some(agent) = self.agents.iter().find(|a| a.id == id) {
                     if let Some(pane_id) = agent.pane_id {
@@ -582,9 +745,12 @@ impl RallyPlugin {
                 }
                 true
             }
+            Some(Selection::Tab(_)) => {
+                // Tab nodes can't be focused.
+                false
+            }
             Some(Selection::Workspace(id)) => {
                 if let Some(ws) = self.workspaces.iter().find(|w| w.id == id) {
-                    // Each workspace runs in a dedicated zellij session named rally-{name}.
                     zellij_switch_session(&format!("rally-{}", ws.name));
                     self.status_message = None;
                 }
@@ -597,6 +763,8 @@ impl RallyPlugin {
     fn action_feedback(&mut self, action: &str) -> bool {
         let target = match &self.selection {
             Some(Selection::Agent(id)) => id.clone(),
+            Some(Selection::Pane(id)) => format!("pane:{id}"),
+            Some(Selection::Tab(pos)) => format!("tab:{pos}"),
             Some(Selection::Workspace(id)) => format!("workspace:{id}"),
             None => "nothing selected".to_string(),
         };
@@ -667,7 +835,8 @@ fn help_lines(width: usize) -> Vec<Line<'static>> {
         Line::from("j/k      move selection"),
         Line::from("h/l      collapse/expand node"),
         Line::from("f        focus selected node"),
-        Line::from("a        ack selected item"),
+        Line::from("a        action menu"),
+        Line::from("K        ack selected item"),
         Line::from("r        restart selected agent"),
         Line::from("s        spawn wizard"),
         Line::from("/        filter agents"),
@@ -807,15 +976,15 @@ mod tests {
             plugin.selection,
             Some(Selection::Workspace("w1".to_string()))
         );
-        assert!(!plugin.collapsed_workspaces.contains("w1"));
+        assert!(!plugin.collapsed.contains("w1"));
 
         // h collapses.
         plugin.handle_key(BareKey::Char('h'));
-        assert!(plugin.collapsed_workspaces.contains("w1"));
+        assert!(plugin.collapsed.contains("w1"));
 
         // l expands.
         plugin.handle_key(BareKey::Char('l'));
-        assert!(!plugin.collapsed_workspaces.contains("w1"));
+        assert!(!plugin.collapsed.contains("w1"));
 
         // l again descends to first child.
         plugin.handle_key(BareKey::Char('l'));
@@ -827,7 +996,7 @@ mod tests {
             plugin.selection,
             Some(Selection::Workspace("w1".to_string()))
         );
-        assert!(plugin.collapsed_workspaces.contains("w1"));
+        assert!(plugin.collapsed.contains("w1"));
     }
 
     #[test]
@@ -838,7 +1007,7 @@ mod tests {
             r#"{"id":"w1","name":"api","canonical_key":"api"}"#,
             r#"{"id":"a1","workspace_id":"w1","role":"impl","runtime":"cc","state":"running"}"#,
         );
-        plugin.collapsed_workspaces.insert("w1".to_string());
+        plugin.collapsed.insert("w1".to_string());
         plugin.filter = "impl".to_string();
 
         let nodes = plugin.visible_tree_nodes();

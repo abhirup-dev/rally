@@ -20,6 +20,8 @@ pub struct RenderCtx<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TreeNode {
     Workspace { id: String },
+    Tab { position: usize, name: String },
+    Pane { id: u32, tab_position: usize },
     Agent { id: String, workspace_id: String },
 }
 
