@@ -1,16 +1,41 @@
 #![deny(unsafe_code)]
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 use serde::Deserialize;
 use widgets::{
-    render_inbox_lines, render_status_lines, render_workspace_lines, AgentInfo, InboxItemInfo,
-    RenderCtx, WorkspaceInfo,
+    render_inbox_lines, render_status_lines, render_tree_lines, AgentInfo, InboxItemInfo,
+    RenderCtx, TreeNode, WorkspaceInfo,
 };
 use zellij_tile::prelude::*;
 use zellij_widgets::prelude::{Line, Modifier, Paragraph, PluginPane, Span, Style, Text};
 
 mod widgets;
+
+/// Tracks which node in the tree is currently selected, by stable ID rather than by index so
+/// that daemon pushes (which can reorder/resize the list) don't silently jump the cursor.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Selection {
+    Workspace(String),
+    Agent(String),
+}
+
+impl Selection {
+    fn matches_node(&self, node: &TreeNode) -> bool {
+        match (self, node) {
+            (Selection::Workspace(id), TreeNode::Workspace { id: nid }) => id == nid,
+            (Selection::Agent(id), TreeNode::Agent { id: nid, .. }) => id == nid,
+            _ => false,
+        }
+    }
+}
+
+fn node_to_selection(node: &TreeNode) -> Selection {
+    match node {
+        TreeNode::Workspace { id } => Selection::Workspace(id.clone()),
+        TreeNode::Agent { id, .. } => Selection::Agent(id.clone()),
+    }
+}
 
 struct RallyPlugin {
     workspaces: Vec<WorkspaceInfo>,
@@ -21,7 +46,12 @@ struct RallyPlugin {
     show_help: bool,
     filter_mode: bool,
     filter: String,
-    selected_agent_id: Option<String>,
+    /// Stable-key selection — never a raw index.
+    selection: Option<Selection>,
+    /// Workspace IDs that the user has explicitly collapsed.
+    collapsed_workspaces: HashSet<String>,
+    /// First visible tree-row index (updated each render() to keep selection in view).
+    scroll_offset: usize,
     status_message: Option<String>,
     ui_version: u64,
     permission_denied: bool,
@@ -40,7 +70,9 @@ impl Default for RallyPlugin {
             show_help: false,
             filter_mode: false,
             filter: String::new(),
-            selected_agent_id: None,
+            selection: None,
+            collapsed_workspaces: HashSet::new(),
+            scroll_offset: 0,
             status_message: None,
             ui_version: 0,
             permission_denied: false,
@@ -67,7 +99,6 @@ impl ZellijPlugin for RallyPlugin {
             EventType::CwdChanged,
         ]);
 
-        // Layout config can override the CLI path (e.g. for dev builds).
         if let Some(cli_path) = config.get("rally_cli_path") {
             self.rally_cli_path = cli_path.clone();
         }
@@ -127,7 +158,11 @@ impl ZellijPlugin for RallyPlugin {
     fn render(&mut self, rows: usize, cols: usize) {
         let rows = rows as u16;
         let cols = cols.min(40) as u16;
-        let lines = self.build_lines(cols as usize);
+
+        // Update scroll before building lines so build_lines can use self.scroll_offset.
+        self.update_scroll(rows as usize);
+
+        let lines = self.build_lines(rows as usize, cols as usize);
         let text = Text::from(lines);
         let area = zellij_widgets::prelude::Geometry::new(rows, cols);
 
@@ -139,67 +174,7 @@ impl ZellijPlugin for RallyPlugin {
 }
 
 impl RallyPlugin {
-    fn build_lines(&self, cols: usize) -> Vec<Line<'static>> {
-        let mut lines = Vec::new();
-
-        // Header
-        lines.push(Line::from(Span::styled(
-            " Rally ",
-            Style::default().add_modifier(Modifier::BOLD),
-        )));
-        lines.push(Line::from("─".repeat(cols)));
-
-        // Error state
-        if let Some(ref err) = self.last_error {
-            lines.push(Line::from(Span::styled(
-                format!("⚠ {}", truncate(err, cols.saturating_sub(2))),
-                Style::default().fg(zellij_widgets::prelude::Color::Red),
-            )));
-            return lines;
-        }
-
-        // Loading / permission denied state
-        if self.workspaces.is_empty() && self.state_version.is_none() {
-            if self.permission_denied {
-                lines.push(Line::from(Span::styled(
-                    "Permission denied.",
-                    Style::default().fg(zellij_widgets::prelude::Color::Red),
-                )));
-                lines.push(Line::from(Span::styled(
-                    "Grant RunCommands to continue.",
-                    Style::default().add_modifier(Modifier::DIM),
-                )));
-            } else {
-                lines.push(Line::from(Span::styled(
-                    "Loading state…",
-                    Style::default().add_modifier(Modifier::DIM),
-                )));
-            }
-            return lines;
-        }
-
-        // Help screen
-        if self.show_help {
-            lines.extend(help_lines(cols));
-            return lines;
-        }
-
-        // Normal render
-        let ctx = RenderCtx {
-            cols,
-            workspaces: &self.workspaces,
-            agents: &self.agents,
-            inbox_items: &self.inbox_items,
-            selected_agent_id: self.selected_agent_id.as_deref(),
-            filter: (!self.filter.is_empty()).then_some(self.filter.as_str()),
-            status_message: self.status_message.as_deref(),
-        };
-        lines.extend(render_workspace_lines(&ctx));
-        lines.extend(render_inbox_lines(&ctx, self.show_inbox_detail));
-        lines.extend(render_status_lines(&ctx));
-
-        lines
-    }
+    // ── State management ──────────────────────────────────────────────────
 
     fn apply_snapshot_bytes(&mut self, bytes: &[u8]) -> bool {
         match serde_json::from_slice::<StateSnapshotResponse>(bytes) {
@@ -225,6 +200,12 @@ impl RallyPlugin {
         true
     }
 
+    fn refresh_state(&self) {
+        let mut ctx = BTreeMap::new();
+        ctx.insert("type".to_string(), "state_snapshot".to_string());
+        run_command(&[&self.rally_cli_path, "--json", "_plugin-state"], ctx);
+    }
+
     fn handle_cwd_changed(&self, pane_id: u32, new_cwd: std::path::PathBuf) {
         let agent = self.agents.iter().find(|a| a.pane_id == Some(pane_id));
         if let Some(agent) = agent {
@@ -246,27 +227,253 @@ impl RallyPlugin {
         }
     }
 
-    fn refresh_state(&self) {
-        let mut ctx = BTreeMap::new();
-        ctx.insert("type".to_string(), "state_snapshot".to_string());
-        run_command(&[&self.rally_cli_path, "--json", "_plugin-state"], ctx);
+    // ── Tree model ────────────────────────────────────────────────────────
+
+    /// Flatten workspace→agent hierarchy into the ordered list of visible nodes,
+    /// respecting collapsed state. If a filter is active and a collapsed workspace
+    /// contains matching agents it is auto-expanded so the matches are reachable.
+    fn visible_tree_nodes(&self) -> Vec<TreeNode> {
+        let mut nodes = Vec::new();
+        for ws in &self.workspaces {
+            nodes.push(TreeNode::Workspace { id: ws.id.clone() });
+
+            let workspace_agents: Vec<&AgentInfo> = self
+                .agents
+                .iter()
+                .filter(|a| a.workspace_id == ws.id && self.agent_matches_filter(a))
+                .collect();
+
+            let is_collapsed = self.collapsed_workspaces.contains(&ws.id);
+            // Auto-expand if filter would surface agents inside a collapsed workspace.
+            let filter_forces_expand = !self.filter.is_empty() && !workspace_agents.is_empty();
+
+            if !is_collapsed || filter_forces_expand {
+                for agent in workspace_agents {
+                    nodes.push(TreeNode::Agent {
+                        id: agent.id.clone(),
+                        workspace_id: ws.id.clone(),
+                    });
+                }
+            }
+        }
+        nodes
+    }
+
+    fn agent_matches_filter(&self, agent: &AgentInfo) -> bool {
+        if self.filter.is_empty() {
+            return true;
+        }
+        agent.role.contains(&self.filter)
+            || agent.runtime.contains(&self.filter)
+            || agent.state.contains(&self.filter)
+            || agent.id.contains(&self.filter)
+    }
+
+    /// Index of the selected node in the current visible list (O(n) but n is tiny).
+    fn selected_index(&self) -> Option<usize> {
+        let sel = self.selection.as_ref()?;
+        self.visible_tree_nodes()
+            .iter()
+            .position(|node| sel.matches_node(node))
+    }
+
+    /// Clamp/reset selection to a valid node after the list changes (snapshot or filter).
+    fn ensure_selection(&mut self) {
+        let nodes = self.visible_tree_nodes();
+        if nodes.is_empty() {
+            self.selection = None;
+            return;
+        }
+        let is_valid = self
+            .selection
+            .as_ref()
+            .map_or(false, |sel| nodes.iter().any(|n| sel.matches_node(n)));
+        if !is_valid {
+            self.selection = Some(node_to_selection(&nodes[0]));
+        }
+    }
+
+    fn move_selection(&mut self, delta: isize) {
+        let nodes = self.visible_tree_nodes();
+        if nodes.is_empty() {
+            self.selection = None;
+            return;
+        }
+        let current = self
+            .selection
+            .as_ref()
+            .and_then(|sel| nodes.iter().position(|n| sel.matches_node(n)))
+            .unwrap_or(0);
+        let next = (current as isize + delta).rem_euclid(nodes.len() as isize) as usize;
+        self.selection = Some(node_to_selection(&nodes[next]));
+    }
+
+    /// h — collapse workspace (or move to parent and collapse if on an agent).
+    fn handle_collapse(&mut self) {
+        match self.selection.clone() {
+            Some(Selection::Workspace(ws_id)) => {
+                self.collapsed_workspaces.insert(ws_id);
+            }
+            Some(Selection::Agent(agent_id)) => {
+                let ws_id = self
+                    .agents
+                    .iter()
+                    .find(|a| a.id == agent_id)
+                    .map(|a| a.workspace_id.clone());
+                if let Some(ws_id) = ws_id {
+                    self.selection = Some(Selection::Workspace(ws_id.clone()));
+                    self.collapsed_workspaces.insert(ws_id);
+                }
+            }
+            None => {}
+        }
+    }
+
+    /// l — expand workspace if collapsed, else move into first child agent.
+    fn handle_expand(&mut self) {
+        match self.selection.clone() {
+            Some(Selection::Workspace(ws_id)) => {
+                if self.collapsed_workspaces.remove(&ws_id) {
+                    // Was collapsed; expanding is the action — stay on workspace node.
+                } else {
+                    // Already expanded: descend into first visible child.
+                    let first_child = self
+                        .agents
+                        .iter()
+                        .find(|a| a.workspace_id == ws_id && self.agent_matches_filter(a))
+                        .map(|a| a.id.clone());
+                    if let Some(agent_id) = first_child {
+                        self.selection = Some(Selection::Agent(agent_id));
+                    }
+                }
+            }
+            Some(Selection::Agent(_)) => {
+                // Leaf node — nothing to expand.
+            }
+            None => {}
+        }
+    }
+
+    // ── Scroll ────────────────────────────────────────────────────────────
+
+    /// Adjust scroll_offset so the selected node stays in the visible tree window.
+    fn update_scroll(&mut self, total_rows: usize) {
+        // Approximate fixed chrome: 2 header + 4 status/inbox.
+        let chrome = 6usize;
+        let tree_rows = total_rows.saturating_sub(chrome).max(1);
+
+        if let Some(idx) = self.selected_index() {
+            if idx < self.scroll_offset {
+                self.scroll_offset = idx;
+            } else if idx >= self.scroll_offset + tree_rows {
+                self.scroll_offset = idx.saturating_sub(tree_rows - 1);
+            }
+        }
+    }
+
+    // ── Rendering ─────────────────────────────────────────────────────────
+
+    fn build_lines(&self, rows: usize, cols: usize) -> Vec<Line<'static>> {
+        let mut lines = Vec::new();
+
+        // Header (2 lines).
+        lines.push(Line::from(Span::styled(
+            " Rally ",
+            Style::default().add_modifier(Modifier::BOLD),
+        )));
+        lines.push(Line::from("─".repeat(cols)));
+
+        if let Some(ref err) = self.last_error {
+            lines.push(Line::from(Span::styled(
+                format!("⚠ {}", truncate(err, cols.saturating_sub(2))),
+                Style::default().fg(zellij_widgets::prelude::Color::Red),
+            )));
+            return lines;
+        }
+
+        if self.workspaces.is_empty() && self.state_version.is_none() {
+            if self.permission_denied {
+                lines.push(Line::from(Span::styled(
+                    "Permission denied.",
+                    Style::default().fg(zellij_widgets::prelude::Color::Red),
+                )));
+                lines.push(Line::from(Span::styled(
+                    "Grant RunCommands to continue.",
+                    Style::default().add_modifier(Modifier::DIM),
+                )));
+            } else {
+                lines.push(Line::from(Span::styled(
+                    "Loading state…",
+                    Style::default().add_modifier(Modifier::DIM),
+                )));
+            }
+            return lines;
+        }
+
+        if self.show_help {
+            lines.extend(help_lines(cols));
+            return lines;
+        }
+
+        // Build status + inbox lines first so we know how many rows the tree gets.
+        let ctx = RenderCtx {
+            cols,
+            agents: &self.agents,
+            inbox_items: &self.inbox_items,
+            filter: (!self.filter.is_empty()).then_some(self.filter.as_str()),
+            status_message: self.status_message.as_deref(),
+        };
+        let inbox_lines = render_inbox_lines(&ctx, self.show_inbox_detail);
+        let status_lines = render_status_lines(&ctx);
+
+        let chrome = 2 + inbox_lines.len() + status_lines.len(); // header already in `lines`
+        let tree_rows = rows.saturating_sub(chrome).max(1);
+
+        // Tree.
+        let visible_nodes = self.visible_tree_nodes();
+        let selected_node = self
+            .selection
+            .as_ref()
+            .and_then(|sel| visible_nodes.iter().find(|n| sel.matches_node(n)));
+
+        let all_tree_lines = render_tree_lines(
+            &self.workspaces,
+            &self.agents,
+            &self.collapsed_workspaces,
+            &visible_nodes,
+            selected_node,
+            cols,
+        );
+
+        lines.extend(
+            all_tree_lines
+                .into_iter()
+                .skip(self.scroll_offset)
+                .take(tree_rows),
+        );
+        lines.extend(inbox_lines);
+        lines.extend(status_lines);
+
+        lines
     }
 
     fn render_to_string(&self, rows: usize, cols: usize) -> String {
         let cols = cols.min(40);
-        let rows = rows as u16;
+        let rows_u16 = rows as u16;
         let cols_u16 = cols as u16;
-        let lines = self.build_lines(cols);
+        let lines = self.build_lines(rows, cols);
         let text = Text::from(lines);
-        let area = zellij_widgets::prelude::Geometry::new(rows, cols_u16);
+        let area = zellij_widgets::prelude::Geometry::new(rows_u16, cols_u16);
 
         let mut buf = Vec::new();
-        let mut pane = PluginPane::new(&mut buf, rows, cols_u16);
+        let mut pane = PluginPane::new(&mut buf, rows_u16, cols_u16);
         let _ = pane.draw(|frame| {
             frame.render_widget(Paragraph::new(text), area);
         });
         String::from_utf8_lossy(&buf).into_owned()
     }
+
+    // ── Key handling ──────────────────────────────────────────────────────
 
     fn handle_key(&mut self, key: BareKey) -> bool {
         if self.filter_mode {
@@ -280,6 +487,14 @@ impl RallyPlugin {
             }
             BareKey::Char('k') | BareKey::Up => {
                 self.move_selection(-1);
+                true
+            }
+            BareKey::Char('h') | BareKey::Left => {
+                self.handle_collapse();
+                true
+            }
+            BareKey::Char('l') | BareKey::Right => {
+                self.handle_expand();
                 true
             }
             BareKey::Char('i') => {
@@ -343,58 +558,13 @@ impl RallyPlugin {
     }
 
     fn action_feedback(&mut self, action: &str) -> bool {
-        let target = self
-            .selected_agent_id
-            .as_deref()
-            .unwrap_or("no selected agent");
+        let target = match &self.selection {
+            Some(Selection::Agent(id)) => id.clone(),
+            Some(Selection::Workspace(id)) => format!("workspace:{id}"),
+            None => "nothing selected".to_string(),
+        };
         self.status_message = Some(format!("{action}: {target}"));
         true
-    }
-
-    fn ensure_selection(&mut self) {
-        let visible = self.visible_agent_ids();
-        if visible.is_empty() {
-            self.selected_agent_id = None;
-            return;
-        }
-        if self
-            .selected_agent_id
-            .as_ref()
-            .is_some_and(|selected| visible.iter().any(|id| id == selected))
-        {
-            return;
-        }
-        self.selected_agent_id = visible.first().cloned();
-    }
-
-    fn move_selection(&mut self, delta: isize) {
-        let visible = self.visible_agent_ids();
-        if visible.is_empty() {
-            self.selected_agent_id = None;
-            return;
-        }
-
-        let current = self
-            .selected_agent_id
-            .as_ref()
-            .and_then(|selected| visible.iter().position(|id| id == selected))
-            .unwrap_or(0);
-        let next = (current as isize + delta).rem_euclid(visible.len() as isize) as usize;
-        self.selected_agent_id = Some(visible[next].clone());
-    }
-
-    fn visible_agent_ids(&self) -> Vec<String> {
-        self.agents
-            .iter()
-            .filter(|agent| {
-                self.filter.is_empty()
-                    || agent.role.contains(&self.filter)
-                    || agent.runtime.contains(&self.filter)
-                    || agent.state.contains(&self.filter)
-                    || agent.id.contains(&self.filter)
-            })
-            .map(|agent| agent.id.clone())
-            .collect()
     }
 }
 
@@ -425,7 +595,8 @@ fn help_lines(width: usize) -> Vec<Line<'static>> {
             Style::default().add_modifier(Modifier::BOLD),
         )),
         Line::from("j/k      move selection"),
-        Line::from("f        focus selected agent"),
+        Line::from("h/l      collapse/expand node"),
+        Line::from("f        focus selected node"),
         Line::from("a        ack selected item"),
         Line::from("r        restart selected agent"),
         Line::from("s        spawn wizard"),
@@ -438,6 +609,13 @@ fn help_lines(width: usize) -> Vec<Line<'static>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn load_snapshot(plugin: &mut RallyPlugin, workspaces: &str, agents: &str) {
+        let payload = format!(
+            r#"{{"kind":"state_snapshot","version":1,"workspaces":[{workspaces}],"agents":[{agents}],"inbox_items":[]}}"#
+        );
+        plugin.apply_snapshot_bytes(payload.as_bytes());
+    }
 
     #[test]
     fn applies_newer_state_snapshot() {
@@ -497,48 +675,161 @@ mod tests {
     }
 
     #[test]
-    fn keyboard_moves_selection_and_filter() {
+    fn initial_selection_is_first_workspace() {
         let mut plugin = RallyPlugin::default();
-        plugin.apply_snapshot_bytes(
-            br#"{
-                "kind":"state_snapshot",
-                "version":1,
-                "workspaces":[{"id":"w1","name":"api","canonical_key":"api"}],
-                "agents":[
-                    {"id":"a1","workspace_id":"w1","role":"impl","runtime":"cc","state":"running"},
-                    {"id":"a2","workspace_id":"w1","role":"review","runtime":"cc","state":"idle"}
-                ],
-                "inbox_items":[]
-            }"#,
+        load_snapshot(
+            &mut plugin,
+            r#"{"id":"w1","name":"api","canonical_key":"api"}"#,
+            r#"{"id":"a1","workspace_id":"w1","role":"impl","runtime":"cc","state":"running"}"#,
         );
-
-        assert_eq!(plugin.selected_agent_id.as_deref(), Some("a1"));
-        assert!(plugin.handle_key(BareKey::Char('j')));
-        assert_eq!(plugin.selected_agent_id.as_deref(), Some("a2"));
-        assert!(plugin.handle_key(BareKey::Char('/')));
-        assert!(plugin.handle_key(BareKey::Char('i')));
-        assert!(plugin.handle_key(BareKey::Char('m')));
-        assert!(plugin.handle_key(BareKey::Char('p')));
-        assert!(plugin.handle_key(BareKey::Char('l')));
-        assert!(plugin.handle_key(BareKey::Enter));
-        assert_eq!(plugin.filter, "impl");
-        assert_eq!(plugin.selected_agent_id.as_deref(), Some("a1"));
+        // After snapshot the tree is [Workspace(w1), Agent(a1)].
+        // ensure_selection picks the first node = workspace.
+        assert_eq!(
+            plugin.selection,
+            Some(Selection::Workspace("w1".to_string()))
+        );
     }
 
     #[test]
-    fn keyboard_action_sets_feedback() {
+    fn jk_navigation_moves_through_tree() {
+        let mut plugin = RallyPlugin::default();
+        load_snapshot(
+            &mut plugin,
+            r#"{"id":"w1","name":"api","canonical_key":"api"}"#,
+            r#"{"id":"a1","workspace_id":"w1","role":"impl","runtime":"cc","state":"running"},
+               {"id":"a2","workspace_id":"w1","role":"review","runtime":"cc","state":"idle"}"#,
+        );
+
+        // Visible: [Workspace(w1), Agent(a1), Agent(a2)]
+        assert_eq!(
+            plugin.selection,
+            Some(Selection::Workspace("w1".to_string()))
+        );
+
+        plugin.handle_key(BareKey::Char('j'));
+        assert_eq!(plugin.selection, Some(Selection::Agent("a1".to_string())));
+
+        plugin.handle_key(BareKey::Char('j'));
+        assert_eq!(plugin.selection, Some(Selection::Agent("a2".to_string())));
+
+        // Wraps around.
+        plugin.handle_key(BareKey::Char('j'));
+        assert_eq!(
+            plugin.selection,
+            Some(Selection::Workspace("w1".to_string()))
+        );
+
+        plugin.handle_key(BareKey::Char('k'));
+        assert_eq!(plugin.selection, Some(Selection::Agent("a2".to_string())));
+    }
+
+    #[test]
+    fn hl_collapse_expand_workspace() {
+        let mut plugin = RallyPlugin::default();
+        load_snapshot(
+            &mut plugin,
+            r#"{"id":"w1","name":"api","canonical_key":"api"}"#,
+            r#"{"id":"a1","workspace_id":"w1","role":"impl","runtime":"cc","state":"running"}"#,
+        );
+
+        // Start at workspace node.
+        assert_eq!(
+            plugin.selection,
+            Some(Selection::Workspace("w1".to_string()))
+        );
+        assert!(!plugin.collapsed_workspaces.contains("w1"));
+
+        // h collapses.
+        plugin.handle_key(BareKey::Char('h'));
+        assert!(plugin.collapsed_workspaces.contains("w1"));
+
+        // l expands.
+        plugin.handle_key(BareKey::Char('l'));
+        assert!(!plugin.collapsed_workspaces.contains("w1"));
+
+        // l again descends to first child.
+        plugin.handle_key(BareKey::Char('l'));
+        assert_eq!(plugin.selection, Some(Selection::Agent("a1".to_string())));
+
+        // h from agent moves to parent workspace and collapses.
+        plugin.handle_key(BareKey::Char('h'));
+        assert_eq!(
+            plugin.selection,
+            Some(Selection::Workspace("w1".to_string()))
+        );
+        assert!(plugin.collapsed_workspaces.contains("w1"));
+    }
+
+    #[test]
+    fn filter_auto_expands_collapsed_workspace() {
+        let mut plugin = RallyPlugin::default();
+        load_snapshot(
+            &mut plugin,
+            r#"{"id":"w1","name":"api","canonical_key":"api"}"#,
+            r#"{"id":"a1","workspace_id":"w1","role":"impl","runtime":"cc","state":"running"}"#,
+        );
+        plugin.collapsed_workspaces.insert("w1".to_string());
+        plugin.filter = "impl".to_string();
+
+        let nodes = plugin.visible_tree_nodes();
+        // Even though w1 is collapsed, the filter matches an agent inside it → auto-expand.
+        assert_eq!(nodes.len(), 2);
+        assert!(matches!(&nodes[1], TreeNode::Agent { id, .. } if id == "a1"));
+    }
+
+    #[test]
+    fn keyboard_filter_mode() {
+        let mut plugin = RallyPlugin::default();
+        load_snapshot(
+            &mut plugin,
+            r#"{"id":"w1","name":"api","canonical_key":"api"}"#,
+            r#"{"id":"a1","workspace_id":"w1","role":"impl","runtime":"cc","state":"running"},
+               {"id":"a2","workspace_id":"w1","role":"review","runtime":"cc","state":"idle"}"#,
+        );
+
+        // Enter filter mode and type "impl".
+        assert!(plugin.handle_key(BareKey::Char('/')));
+        for c in "impl".chars() {
+            plugin.handle_key(BareKey::Char(c));
+        }
+        plugin.handle_key(BareKey::Enter);
+
+        assert_eq!(plugin.filter, "impl");
+        // Selection should land on the workspace (first visible node) or the matching agent.
+        let nodes = plugin.visible_tree_nodes();
+        assert!(nodes
+            .iter()
+            .any(|n| matches!(n, TreeNode::Agent { id, .. } if id == "a1")));
+        assert!(!nodes
+            .iter()
+            .any(|n| matches!(n, TreeNode::Agent { id, .. } if id == "a2")));
+    }
+
+    #[test]
+    fn action_feedback_for_agent() {
         let mut plugin = RallyPlugin {
-            selected_agent_id: Some("a1".to_string()),
+            selection: Some(Selection::Agent("a1".to_string())),
             ..Default::default()
         };
-
         assert!(plugin.handle_key(BareKey::Char('f')));
-
         assert_eq!(plugin.status_message.as_deref(), Some("focus: a1"));
     }
 
     #[test]
-    fn render_body_contains_widget_output() {
+    fn action_feedback_for_workspace() {
+        let mut plugin = RallyPlugin {
+            selection: Some(Selection::Workspace("w1".to_string())),
+            ..Default::default()
+        };
+        assert!(plugin.handle_key(BareKey::Char('f')));
+        assert_eq!(
+            plugin.status_message.as_deref(),
+            Some("focus: workspace:w1")
+        );
+    }
+
+    #[test]
+    fn render_body_contains_tree_output() {
         let mut plugin = RallyPlugin::default();
         plugin.apply_snapshot_bytes(
             br#"{
@@ -552,9 +843,9 @@ mod tests {
 
         let body = plugin.render_to_string(50, 40);
 
-        assert!(body.contains("api"));
-        assert!(body.contains("impl"));
-        assert!(body.contains("1 agents"));
+        assert!(body.contains("api"), "workspace name visible");
+        assert!(body.contains("impl"), "agent role visible");
+        assert!(body.contains("1 agents"), "status bar visible");
     }
 
     #[test]

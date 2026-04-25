@@ -7,16 +7,21 @@ use zellij_widgets::prelude::*;
 
 pub use inbox_summary::render_inbox_lines;
 pub use status_bar::render_status_lines;
-pub use workspace_tree::render_workspace_lines;
+pub use workspace_tree::render_tree_lines;
 
 pub struct RenderCtx<'a> {
     pub cols: usize,
-    pub workspaces: &'a [WorkspaceInfo],
     pub agents: &'a [AgentInfo],
     pub inbox_items: &'a [InboxItemInfo],
-    pub selected_agent_id: Option<&'a str>,
     pub filter: Option<&'a str>,
     pub status_message: Option<&'a str>,
+}
+
+/// A node in the visible (collapse-aware, filter-aware) tree.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TreeNode {
+    Workspace { id: String },
+    Agent { id: String, workspace_id: String },
 }
 
 // Fields are deserialized from daemon JSON; not all are read by the rendering code yet.

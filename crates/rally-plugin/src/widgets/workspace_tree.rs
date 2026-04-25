@@ -1,91 +1,146 @@
-use super::{state_glyph, truncate_chars, AgentInfo, RenderCtx};
+use std::borrow::Cow;
+use std::collections::HashSet;
+
+use super::{state_glyph, truncate_chars, AgentInfo, TreeNode, WorkspaceInfo};
 use zellij_widgets::prelude::*;
 
-pub fn render_workspace_lines(ctx: &RenderCtx<'_>) -> Vec<Line<'static>> {
+/// Render the visible tree nodes as styled lines with tree connectors.
+///
+/// `visible_nodes` is already collapsed/filter-aware — callers build it via
+/// `visible_tree_nodes()`. `selected` is the currently focused node (for REVERSED highlight).
+pub fn render_tree_lines(
+    workspaces: &[WorkspaceInfo],
+    agents: &[AgentInfo],
+    collapsed: &HashSet<String>,
+    visible_nodes: &[TreeNode],
+    selected: Option<&TreeNode>,
+    cols: usize,
+) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
 
-    for workspace in ctx.workspaces {
-        let max_name = ctx.cols.saturating_sub(2).max(1);
-        lines.push(Line::from(vec![
-            Span::styled(
-                "◆",
-                Style::default()
-                    .fg(Color::Blue)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::raw(" "),
-            Span::styled(
-                truncate_chars(&workspace.name, max_name),
-                Style::default().add_modifier(Modifier::BOLD),
-            ),
-        ]));
-
-        let mut count = 0usize;
-        for agent in ctx
-            .agents
-            .iter()
-            .filter(|a| a.workspace_id == workspace.id)
-            .filter(|a| matches_filter(a, ctx.filter))
-        {
-            count += 1;
-            lines.push(render_agent_line(
-                agent,
-                ctx.cols,
-                ctx.selected_agent_id == Some(agent.id.as_str()),
-            ));
-        }
-
-        if count == 0 {
-            lines.push(Line::from(Span::styled(
-                "  no agents",
-                Style::default().add_modifier(Modifier::DIM),
-            )));
-        }
+    for (i, node) in visible_nodes.iter().enumerate() {
+        let is_selected = selected == Some(node);
+        let line = match node {
+            TreeNode::Workspace { id } => {
+                workspace_line(id, workspaces, agents, collapsed, cols, is_selected)
+            }
+            TreeNode::Agent { id, workspace_id } => {
+                // Last agent under this workspace = next node belongs to a different workspace (or end).
+                let is_last = !matches!(
+                    visible_nodes.get(i + 1),
+                    Some(TreeNode::Agent { workspace_id: nw, .. }) if nw == workspace_id
+                );
+                agent_line(
+                    id,
+                    agents,
+                    if is_last { "└──" } else { "├──" },
+                    cols,
+                    is_selected,
+                )
+            }
+        };
+        lines.push(line);
     }
 
     lines
 }
 
-fn render_agent_line(agent: &AgentInfo, cols: usize, selected: bool) -> Line<'static> {
+fn workspace_line(
+    ws_id: &str,
+    workspaces: &[WorkspaceInfo],
+    agents: &[AgentInfo],
+    collapsed: &HashSet<String>,
+    cols: usize,
+    selected: bool,
+) -> Line<'static> {
+    let name = workspaces
+        .iter()
+        .find(|w| w.id == ws_id)
+        .map(|w| w.name.clone())
+        .unwrap_or_else(|| ws_id.to_string());
+
+    let has_agents = agents.iter().any(|a| a.workspace_id == ws_id);
+    let glyph: &'static str = if !has_agents {
+        "◆"
+    } else if collapsed.contains(ws_id) {
+        "▶"
+    } else {
+        "▼"
+    };
+
+    let max_name = cols.saturating_sub(3).max(1);
+    let spans = vec![
+        Span::styled(
+            glyph,
+            Style::default()
+                .fg(Color::Blue)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" "),
+        Span::styled(
+            truncate_chars(&name, max_name),
+            Style::default().add_modifier(Modifier::BOLD),
+        ),
+    ];
+
+    styled_line(spans, selected)
+}
+
+fn agent_line(
+    agent_id: &str,
+    agents: &[AgentInfo],
+    connector: &'static str,
+    cols: usize,
+    selected: bool,
+) -> Line<'static> {
+    let Some(agent) = agents.iter().find(|a| a.id == agent_id) else {
+        return Line::from(Span::styled(
+            format!(" {connector} (unknown)"),
+            Style::default().add_modifier(Modifier::DIM),
+        ));
+    };
+
+    let (glyph, glyph_style) = state_glyph(&agent.state);
     let branch_tag = agent
         .branch
         .as_deref()
         .map(|b| format!(" [{b}]"))
         .unwrap_or_default();
-    let pane = agent.pane_id.map(|p| format!(" p:{p}")).unwrap_or_default();
-    let suffix = format!(" ({}){}{}", agent.runtime, branch_tag, pane);
+    let suffix = format!(" ({}){}", agent.runtime, branch_tag);
+
+    // " ├── ● " = 1 space + 3 connector chars + 1 space + 1 glyph col + 1 space = 7 display cols
+    let prefix_len = 7usize;
     let max_role = cols
-        .saturating_sub(6)
-        .saturating_sub(suffix.chars().count())
+        .saturating_sub(prefix_len + suffix.chars().count())
         .max(1);
 
-    let (glyph, glyph_style) = state_glyph(&agent.state);
-
-    let cursor = if selected {
-        Span::styled(">", Style::default().add_modifier(Modifier::REVERSED))
-    } else {
-        Span::raw(" ")
-    };
-
-    Line::from(vec![
-        Span::raw(" "),
-        cursor,
-        Span::raw(" "),
+    let spans = vec![
+        Span::raw(format!(" {connector} ")),
         Span::styled(glyph, glyph_style),
         Span::raw(" "),
         Span::raw(truncate_chars(&agent.role, max_role)),
         Span::styled(suffix, Style::default().add_modifier(Modifier::DIM)),
-    ])
+    ];
+
+    styled_line(spans, selected)
 }
 
-fn matches_filter(agent: &AgentInfo, filter: Option<&str>) -> bool {
-    let Some(filter) = filter.filter(|f| !f.is_empty()) else {
-        return true;
-    };
-    agent.role.contains(filter)
-        || agent.runtime.contains(filter)
-        || agent.state.contains(filter)
-        || agent.id.contains(filter)
+/// Apply REVERSED modifier to every span for the selected line highlight.
+fn styled_line(spans: Vec<Span<'static>>, selected: bool) -> Line<'static> {
+    if !selected {
+        return Line::from(spans);
+    }
+    Line::from(
+        spans
+            .into_iter()
+            .map(|s| {
+                Span::styled(
+                    Cow::<'static, str>::Owned(s.content.into_owned()),
+                    s.style.add_modifier(Modifier::REVERSED),
+                )
+            })
+            .collect::<Vec<_>>(),
+    )
 }
 
 #[cfg(test)]
@@ -116,55 +171,125 @@ mod tests {
         }
     }
 
-    fn lines_contain(lines: &[Line<'_>], needle: &str) -> bool {
-        lines.iter().any(|line| {
-            let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
-            text.contains(needle)
-        })
+    fn lines_text(lines: &[Line<'_>]) -> String {
+        lines
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|s| s.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     #[test]
-    fn renders_workspace_tree_grouped_by_workspace() {
+    fn renders_expanded_workspace_with_connectors() {
         let workspaces = vec![workspace("w1", "api"), workspace("w2", "web")];
         let agents = vec![
             agent("w1", "impl", "running"),
-            agent("w2", "review", "attention_required"),
+            agent("w1", "review", "attention_required"),
+            agent("w2", "ops", "idle"),
         ];
-        let ctx = RenderCtx {
-            cols: 40,
-            workspaces: &workspaces,
-            agents: &agents,
-            inbox_items: &[],
-            selected_agent_id: Some("w2-review"),
-            filter: None,
-            status_message: None,
-        };
+        let collapsed = HashSet::new();
+        let visible_nodes = vec![
+            TreeNode::Workspace {
+                id: "w1".to_string(),
+            },
+            TreeNode::Agent {
+                id: "w1-impl".to_string(),
+                workspace_id: "w1".to_string(),
+            },
+            TreeNode::Agent {
+                id: "w1-review".to_string(),
+                workspace_id: "w1".to_string(),
+            },
+            TreeNode::Workspace {
+                id: "w2".to_string(),
+            },
+            TreeNode::Agent {
+                id: "w2-ops".to_string(),
+                workspace_id: "w2".to_string(),
+            },
+        ];
 
-        let lines = render_workspace_lines(&ctx);
+        let lines = render_tree_lines(&workspaces, &agents, &collapsed, &visible_nodes, None, 40);
+        let text = lines_text(&lines);
 
-        assert!(lines_contain(&lines, "api"));
-        assert!(lines_contain(&lines, "impl"));
-        assert!(lines_contain(&lines, "web"));
-        assert!(lines_contain(&lines, "review"));
-        assert!(lines_contain(&lines, "◉"));
+        assert!(text.contains("▼ api"), "expanded workspace glyph");
+        assert!(text.contains("├──"), "non-last connector");
+        assert!(text.contains("└──"), "last connector");
+        assert!(text.contains("impl"));
+        assert!(text.contains("review"));
+        assert!(text.contains("▼ web"));
+        assert!(text.contains("ops"));
     }
 
     #[test]
-    fn renders_empty_workspace_placeholder() {
+    fn renders_collapsed_workspace_without_agents() {
         let workspaces = vec![workspace("w1", "api")];
-        let ctx = RenderCtx {
-            cols: 40,
-            workspaces: &workspaces,
-            agents: &[],
-            inbox_items: &[],
-            selected_agent_id: None,
-            filter: None,
-            status_message: None,
-        };
+        let agents = vec![agent("w1", "impl", "running")];
+        let mut collapsed = HashSet::new();
+        collapsed.insert("w1".to_string());
+        let visible_nodes = vec![TreeNode::Workspace {
+            id: "w1".to_string(),
+        }];
 
-        let lines = render_workspace_lines(&ctx);
+        let lines = render_tree_lines(&workspaces, &agents, &collapsed, &visible_nodes, None, 40);
+        let text = lines_text(&lines);
 
-        assert!(lines_contain(&lines, "no agents"));
+        assert!(text.contains("▶ api"), "collapsed workspace glyph");
+        assert!(!text.contains("impl"), "agents hidden when collapsed");
+    }
+
+    #[test]
+    fn renders_empty_workspace_with_diamond() {
+        let workspaces = vec![workspace("w1", "api")];
+        let agents: Vec<AgentInfo> = vec![];
+        let collapsed = HashSet::new();
+        let visible_nodes = vec![TreeNode::Workspace {
+            id: "w1".to_string(),
+        }];
+
+        let lines = render_tree_lines(&workspaces, &agents, &collapsed, &visible_nodes, None, 40);
+        let text = lines_text(&lines);
+
+        assert!(text.contains("◆ api"), "empty workspace uses diamond");
+    }
+
+    #[test]
+    fn selection_applies_reversed_style() {
+        let workspaces = vec![workspace("w1", "api")];
+        let agents = vec![agent("w1", "impl", "running")];
+        let collapsed = HashSet::new();
+        let visible_nodes = vec![
+            TreeNode::Workspace {
+                id: "w1".to_string(),
+            },
+            TreeNode::Agent {
+                id: "w1-impl".to_string(),
+                workspace_id: "w1".to_string(),
+            },
+        ];
+        let selected = &visible_nodes[1];
+
+        let lines = render_tree_lines(
+            &workspaces,
+            &agents,
+            &collapsed,
+            &visible_nodes,
+            Some(selected),
+            40,
+        );
+
+        // The selected line's spans should carry REVERSED modifier.
+        let selected_line = &lines[1];
+        let has_reversed = selected_line
+            .spans
+            .iter()
+            .any(|s| s.style.add_modifier == Modifier::REVERSED);
+        assert!(has_reversed, "selected node gets REVERSED modifier");
     }
 
     #[test]

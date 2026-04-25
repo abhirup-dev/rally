@@ -183,10 +183,8 @@ mod tests {
         let inbox_items = vec![inbox("i1", "a1", "High")];
         let ctx = RenderCtx {
             cols: 80,
-            workspaces: &[],
             agents: &agents,
             inbox_items: &inbox_items,
-            selected_agent_id: None,
             filter: None,
             status_message: None,
         };
@@ -205,10 +203,8 @@ mod tests {
         let inbox_items = vec![inbox("i1", "a1", "High")];
         let ctx = RenderCtx {
             cols: 80,
-            workspaces: &[],
             agents: &agents,
             inbox_items: &inbox_items,
-            selected_agent_id: None,
             filter: None,
             status_message: None,
         };
@@ -225,10 +221,8 @@ mod tests {
         let agents = vec![agent("a1", "impl", "waiting_for_input")];
         let ctx = RenderCtx {
             cols: 80,
-            workspaces: &[],
             agents: &agents,
             inbox_items: &[],
-            selected_agent_id: None,
             filter: None,
             status_message: None,
         };

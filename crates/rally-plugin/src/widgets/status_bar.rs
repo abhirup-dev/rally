@@ -98,10 +98,8 @@ mod tests {
         ];
         let ctx = RenderCtx {
             cols: 80,
-            workspaces: &[],
             agents: &agents,
             inbox_items: &[],
-            selected_agent_id: None,
             filter: None,
             status_message: None,
         };
