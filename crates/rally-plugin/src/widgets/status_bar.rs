@@ -30,7 +30,7 @@ pub fn render_status_lines(ctx: &RenderCtx<'_>) -> Vec<Line<'static>> {
     lines.push(summary_line(total, running, attention));
     lines.push(Line::from(Span::styled(
         truncate_chars(
-            "[N]ext [j/k]move [f]ocus [a]ck [s]pawn [/]filter [?]help",
+            "[j/k]move [h/l]collapse [f]ocus [a]ck [s]pawn [/]filter [?]help",
             width,
         ),
         Style::default().add_modifier(Modifier::DIM),
@@ -110,6 +110,6 @@ mod tests {
         assert!(text.contains("3 agents"));
         assert!(text.contains("1●"));
         assert!(text.contains("1⚠"));
-        assert!(text.contains("[N]ext"));
+        assert!(text.contains("[j/k]move"));
     }
 }
