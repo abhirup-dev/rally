@@ -103,14 +103,25 @@ fn zellij_split(direction: &str, cwd_str: &str) -> anyhow::Result<()> {
 }
 
 fn zellij_restart(pane_id: u32, cwd_str: &str) -> anyhow::Result<()> {
-    // Focus the target pane, then close it, then open a new one in the same CWD.
-    let _ = Command::new("zellij")
+    let pane_id_str = pane_id.to_string();
+
+    // 1. Focus the target pane (by ID) so close-pane targets it.
+    let status = Command::new("zellij")
+        .args(["action", "focus-pane-id", &pane_id_str])
+        .status()?;
+    if !status.success() {
+        anyhow::bail!("zellij focus-pane-id {pane_id} failed: {status}");
+    }
+
+    // 2. Close the now-focused target pane.
+    let status = Command::new("zellij")
         .args(["action", "close-pane"])
-        .status();
-    // close-pane closes the focused pane — we need to ensure the target is focused first.
-    // For now, use write-chars to send "exit" to the terminal.
-    // TODO: This is a workaround — Zellij doesn't support close-pane-by-id from CLI.
-    let _ = pane_id;
+        .status()?;
+    if !status.success() {
+        anyhow::bail!("zellij close-pane failed: {status}");
+    }
+
+    // 3. Open a new terminal in the same CWD.
     let status = Command::new("zellij")
         .args(["action", "new-pane", "--cwd", cwd_str])
         .status()?;
