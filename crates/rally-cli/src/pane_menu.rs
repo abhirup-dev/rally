@@ -63,24 +63,32 @@ fn menu_loop(stdout: &mut io::Stdout, cwd_str: &str) -> anyhow::Result<Option<us
 }
 
 fn draw(stdout: &mut io::Stdout, selected: usize, cwd_str: &str) -> anyhow::Result<()> {
-    execute!(stdout, cursor::MoveTo(0, 0), terminal::Clear(terminal::ClearType::All))?;
+    // In raw mode, '\n' moves down without carriage-return. Place each line
+    // with MoveTo(0, row) instead of writeln! to keep columns clean.
+    execute!(stdout, terminal::Clear(terminal::ClearType::All))?;
 
-    writeln!(stdout, "{}", style::Attribute::Bold)?;
-    writeln!(stdout, " Pane Actions")?;
-    writeln!(stdout, "{}", style::Attribute::Reset)?;
-    writeln!(stdout, " CWD: {cwd_str}")?;
-    writeln!(stdout)?;
+    let mut row: u16 = 0;
+    execute!(stdout, cursor::MoveTo(0, row))?;
+    write!(stdout, " {}Pane Actions{}", style::Attribute::Bold, style::Attribute::Reset)?;
+    row += 1;
+
+    execute!(stdout, cursor::MoveTo(0, row))?;
+    write!(stdout, " CWD: {cwd_str}")?;
+    row += 2;
 
     for (i, (label, desc)) in ACTIONS.iter().enumerate() {
+        execute!(stdout, cursor::MoveTo(0, row))?;
         if i == selected {
-            writeln!(stdout, " \x1b[7m > {label:16}\x1b[27m  {desc}")?;
+            write!(stdout, " \x1b[7m > {label:16}\x1b[27m  {desc}")?;
         } else {
-            writeln!(stdout, "   {label:16}  \x1b[2m{desc}\x1b[22m")?;
+            write!(stdout, "   {label:16}  \x1b[2m{desc}\x1b[22m")?;
         }
+        row += 1;
     }
+    row += 1;
 
-    writeln!(stdout)?;
-    writeln!(stdout, " \x1b[2m[j/k] move  [Enter] select  [Esc] cancel\x1b[22m")?;
+    execute!(stdout, cursor::MoveTo(0, row))?;
+    write!(stdout, " \x1b[2m[j/k] move  [Enter] select  [Esc/q] cancel\x1b[22m")?;
     stdout.flush()?;
     Ok(())
 }

@@ -142,6 +142,11 @@ impl ZellijPlugin for RallyPlugin {
         request_permission(&[
             PermissionType::RunCommands,
             PermissionType::ReadApplicationState,
+            // ChangeApplicationState is required for focus_terminal_pane,
+            // set_pane_color (S4.3), rename_terminal_pane (S4.4), and
+            // switch_session (workspace focus). Without it, those calls are
+            // silently denied — see zellij_exports.rs permission table.
+            PermissionType::ChangeApplicationState,
         ]);
         subscribe(&[
             EventType::RunCommandResult,
