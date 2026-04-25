@@ -13,6 +13,7 @@ rally-config        = { workspace = true }
 rally-host-zellij   = { workspace = true }
 rally-capture       = { workspace = true }
 clap                = { version = "4", features = ["derive"] }
+crossterm           = "0.28"
 serde_json          = "1"
 tokio               = { version = "1", features = ["io-util", "net", "rt", "macros", "rt-multi-thread", "time"] }
 anyhow              = "1"

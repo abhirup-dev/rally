@@ -1,6 +1,7 @@
 #![deny(unsafe_code)]
 
 mod ipc_client;
+mod pane_menu;
 mod tracing_init;
 
 use std::path::PathBuf;
@@ -67,6 +68,11 @@ enum Commands {
     Alias {
         #[command(subcommand)]
         action: AliasAction,
+    },
+    /// Pane actions (floating action menu)
+    Pane {
+        #[command(subcommand)]
+        action: PaneAction,
     },
     /// Pane ↔ agent correlation shim (exec'd inside the new pane)
     #[command(name = "_attach")]
@@ -172,6 +178,19 @@ enum AliasAction {
 }
 
 #[derive(Subcommand)]
+enum PaneAction {
+    /// Interactive action menu for a pane (runs in a Zellij floating pane)
+    Menu {
+        /// Zellij terminal pane ID
+        #[arg(long)]
+        pane_id: u32,
+        /// Working directory of the pane
+        #[arg(long)]
+        cwd: Option<PathBuf>,
+    },
+}
+
+#[derive(Subcommand)]
 enum LayoutAction {
     /// Print the bundled rally.kdl layout to stdout
     Export,
@@ -218,6 +237,9 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             AliasAction::Set { .. } => "alias set",
             AliasAction::Get { .. } => "alias get",
             AliasAction::Ls => "alias ls",
+        },
+        Commands::Pane { action } => match action {
+            PaneAction::Menu { .. } => "pane menu",
         },
         Commands::InstallPlugin => "install-plugin",
         Commands::Layout { .. } => "layout export",
@@ -468,6 +490,12 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::Layout { action } => match action {
             LayoutAction::Export => {
                 print!("{}", BUNDLED_LAYOUT_KDL);
+            }
+        },
+
+        Commands::Pane { action } => match action {
+            PaneAction::Menu { pane_id, cwd } => {
+                pane_menu::run(pane_id, cwd)?;
             }
         },
 

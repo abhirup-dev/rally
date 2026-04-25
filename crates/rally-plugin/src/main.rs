@@ -680,7 +680,7 @@ impl RallyPlugin {
                 true
             }
             BareKey::Char('f') => self.handle_focus(),
-            BareKey::Char('a') => self.action_feedback("action"),
+            BareKey::Char('a') => self.handle_action_menu(),
             BareKey::Char('K') => self.action_feedback("ack"),
             BareKey::Char('r') => self.action_feedback("restart"),
             BareKey::Char('s') => self.action_feedback("spawn"),
@@ -760,6 +760,48 @@ impl RallyPlugin {
         }
     }
 
+    fn handle_action_menu(&mut self) -> bool {
+        let (pane_id, cwd) = match &self.selection {
+            Some(Selection::Pane(id)) => (*id, self.pane_cwds.get(id).cloned()),
+            Some(Selection::Agent(agent_id)) => {
+                if let Some(agent) = self.agents.iter().find(|a| a.id == *agent_id) {
+                    if let Some(pid) = agent.pane_id {
+                        (pid, self.pane_cwds.get(&pid).cloned())
+                    } else {
+                        self.status_message = Some("agent has no pane bound yet".into());
+                        return true;
+                    }
+                } else {
+                    return false;
+                }
+            }
+            _ => {
+                self.status_message = Some("select a pane to open action menu".into());
+                return true;
+            }
+        };
+
+        let mut args = vec![
+            &self.rally_cli_path as &str,
+            "pane",
+            "menu",
+            "--pane-id",
+        ];
+        let pane_id_str = pane_id.to_string();
+        args.push(&pane_id_str);
+
+        let cwd_string;
+        if let Some(ref cwd_path) = cwd {
+            cwd_string = cwd_path.to_string_lossy().into_owned();
+            args.push("--cwd");
+            args.push(&cwd_string);
+        }
+
+        zellij_open_floating_command(&args);
+        self.status_message = None;
+        true
+    }
+
     fn action_feedback(&mut self, action: &str) -> bool {
         let target = match &self.selection {
             Some(Selection::Agent(id)) => id.clone(),
@@ -808,6 +850,20 @@ fn zellij_set_pane_color(pane_id: u32, pane_bg: Option<&str>) {
         pane_bg.map(str::to_owned),
     );
     let _ = (pane_id, pane_bg);
+}
+
+/// Spawn a floating command pane (S5.2: action menu).
+fn zellij_open_floating_command(args: &[&str]) {
+    #[cfg(not(test))]
+    {
+        let cmd = CommandToRun {
+            path: args.first().copied().unwrap_or("rally").into(),
+            args: args.iter().skip(1).map(|s| s.to_string()).collect(),
+            cwd: None,
+        };
+        open_command_pane_floating(cmd, None, BTreeMap::new());
+    }
+    let _ = args;
 }
 
 /// Rename a terminal pane with a state-emoji prefix (S4.4).
