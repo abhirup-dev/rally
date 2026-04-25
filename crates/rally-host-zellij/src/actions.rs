@@ -11,6 +11,7 @@ pub struct ZellijActions;
 
 impl ZellijActions {
     /// Open a new pane and run `command` inside it.
+    /// Returns the pane ID (parsed from zellij's `terminal_<id>` stdout).
     ///
     /// `rally agent spawn --workspace X -- claude ...` translates to:
     /// `zellij [--session S] action new-pane [--cwd D] --name <name> -- <command>`
@@ -20,17 +21,19 @@ impl ZellijActions {
         name: Option<&str>,
         cwd: Option<&std::path::Path>,
         command: &[&str],
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<u32> {
         let args = Self::new_pane_args(handle, name, cwd, command);
         debug!(?args, "running zellij action new-pane");
-        let status = std::process::Command::new("zellij")
+        let output = std::process::Command::new("zellij")
             .args(&args)
-            .status()
+            .output()
             .map_err(|e| anyhow::anyhow!("zellij new-pane failed: {e}"))?;
-        if !status.success() {
-            anyhow::bail!("zellij action new-pane exited with {status}");
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("zellij action new-pane exited with {}: {stderr}", output.status);
         }
-        Ok(())
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        parse_pane_id(stdout.trim())
     }
 
     /// Build the argument list for `new_pane` without executing.
@@ -180,6 +183,17 @@ impl ZellijActions {
     }
 }
 
+/// Parse a pane ID from zellij's stdout format: `terminal_<id>` or `plugin_<id>`.
+fn parse_pane_id(output: &str) -> anyhow::Result<u32> {
+    let id_str = output
+        .strip_prefix("terminal_")
+        .or_else(|| output.strip_prefix("plugin_"))
+        .ok_or_else(|| anyhow::anyhow!("unexpected pane ID format: {output:?}"))?;
+    id_str
+        .parse()
+        .map_err(|e| anyhow::anyhow!("failed to parse pane ID from {output:?}: {e}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -257,5 +271,22 @@ mod tests {
                 "7"
             ]
         );
+    }
+
+    #[test]
+    fn parse_terminal_pane_id() {
+        assert_eq!(parse_pane_id("terminal_42").unwrap(), 42);
+    }
+
+    #[test]
+    fn parse_plugin_pane_id() {
+        assert_eq!(parse_pane_id("plugin_7").unwrap(), 7);
+    }
+
+    #[test]
+    fn parse_pane_id_rejects_garbage() {
+        assert!(parse_pane_id("unknown_format").is_err());
+        assert!(parse_pane_id("terminal_abc").is_err());
+        assert!(parse_pane_id("").is_err());
     }
 }

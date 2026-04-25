@@ -297,27 +297,33 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                         })
                         .await?;
 
-                    // If a command was given, open a Zellij pane with the _attach shim
+                    // Open a Zellij pane with the command and bind it directly via pane ID.
                     if !command.is_empty() {
                         if let Response::Agent(ref view) = resp {
-                            let agent_id = view.id.to_string();
+                            let agent_id = view.id;
                             let session = rally_host_zellij::PluginBootstrap::detect();
-                            let exe = std::env::current_exe()?;
-                            let mut pane_cmd: Vec<String> = vec![
-                                exe.to_string_lossy().into_owned(),
-                                "_attach".into(),
-                                agent_id.clone(),
-                            ];
-                            pane_cmd.extend(command);
-                            let pane_cmd_refs: Vec<&str> =
-                                pane_cmd.iter().map(|s| s.as_str()).collect();
-                            info!(agent_id, "spawning agent pane via zellij");
-                            rally_host_zellij::ZellijActions::new_pane(
+                            let cmd_refs: Vec<&str> =
+                                command.iter().map(|s| s.as_str()).collect();
+                            info!(%agent_id, "spawning agent pane via zellij");
+                            let pane_id = rally_host_zellij::ZellijActions::new_pane(
                                 session.as_ref(),
                                 Some(&role),
                                 cwd.as_deref(),
-                                &pane_cmd_refs,
+                                &cmd_refs,
                             )?;
+                            let session_name = session
+                                .as_ref()
+                                .map(|h| h.session_name.clone())
+                                .unwrap_or_default();
+                            info!(%agent_id, pane_id, %session_name, "binding pane to agent");
+                            let _ = client
+                                .call(Request::BindPane {
+                                    agent_id,
+                                    session_name: session_name.into(),
+                                    tab_index: 0,
+                                    pane_id,
+                                })
+                                .await;
                         }
                     }
                     print_response(&resp, cli.json);
