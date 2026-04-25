@@ -1,7 +1,9 @@
 use std::borrow::Cow;
 use std::collections::HashSet;
 
-use super::{state_glyph, truncate_chars, AgentInfo, TreeNode, WorkspaceInfo};
+use crate::theme::state_theme;
+
+use super::{truncate_chars, AgentInfo, TreeNode, WorkspaceInfo};
 use zellij_widgets::prelude::*;
 
 /// Render the visible tree nodes as styled lines with tree connectors.
@@ -100,7 +102,9 @@ fn agent_line(
         ));
     };
 
-    let (glyph, glyph_style) = state_glyph(&agent.state);
+    let theme = state_theme(&agent.state);
+    let glyph = theme.glyph;
+    let glyph_style = theme.style;
     let branch_tag = agent
         .branch
         .as_deref()

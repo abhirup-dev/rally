@@ -3,7 +3,6 @@ mod status_bar;
 mod workspace_tree;
 
 use serde::Deserialize;
-use zellij_widgets::prelude::*;
 
 pub use inbox_summary::render_inbox_lines;
 pub use status_bar::render_status_lines;
@@ -68,20 +67,6 @@ pub struct InboxItemInfo {
     pub raised_at: u64,
     #[serde(default)]
     pub message: Option<String>,
-}
-
-pub fn state_glyph(state: &str) -> (&'static str, Style) {
-    match state {
-        "running" => ("●", Style::default().fg(Color::Green)),
-        "idle" => ("◐", Style::default().fg(Color::Yellow)),
-        "attention_required" => ("◉", Style::default().fg(Color::Red)),
-        "completed" => ("○", Style::default().fg(Color::Green)),
-        "stopped" => ("✕", Style::default().add_modifier(Modifier::DIM)),
-        "failed" => ("✗", Style::default().fg(Color::Red)),
-        "initializing" => ("⧗", Style::default().add_modifier(Modifier::DIM)),
-        "waiting_for_input" => ("⚠", Style::default().fg(Color::Yellow)),
-        _ => ("?", Style::default()),
-    }
 }
 
 pub fn truncate_chars(value: &str, max: usize) -> String {

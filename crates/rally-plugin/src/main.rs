@@ -3,6 +3,7 @@
 use std::collections::{BTreeMap, HashSet};
 
 use serde::Deserialize;
+use theme::state_theme;
 use widgets::{
     render_inbox_lines, render_status_lines, render_tree_lines, AgentInfo, InboxItemInfo,
     RenderCtx, TreeNode, WorkspaceInfo,
@@ -10,6 +11,7 @@ use widgets::{
 use zellij_tile::prelude::*;
 use zellij_widgets::prelude::{Line, Modifier, Paragraph, PluginPane, Span, Style, Text};
 
+mod theme;
 mod widgets;
 
 /// Tracks which node in the tree is currently selected, by stable ID rather than by index so
@@ -197,6 +199,16 @@ impl RallyPlugin {
         self.inbox_items = snapshot.inbox_items;
         self.ensure_selection();
         self.last_error = None;
+
+        // S4.3 + S4.4: update every bound pane's color tint and name to reflect current state.
+        for agent in &self.agents {
+            if let Some(pane_id) = agent.pane_id {
+                let theme = state_theme(&agent.state);
+                zellij_set_pane_color(pane_id, theme.pane_bg);
+                zellij_rename_pane(pane_id, &format!("{} {}", theme.glyph, agent.role));
+            }
+        }
+
         true
     }
 
@@ -510,7 +522,7 @@ impl RallyPlugin {
                 self.status_message = Some("filter mode: type query, Enter to apply".into());
                 true
             }
-            BareKey::Char('f') => self.action_feedback("focus"),
+            BareKey::Char('f') => self.handle_focus(),
             BareKey::Char('a') => self.action_feedback("ack"),
             BareKey::Char('r') => self.action_feedback("restart"),
             BareKey::Char('s') => self.action_feedback("spawn"),
@@ -557,6 +569,31 @@ impl RallyPlugin {
         }
     }
 
+    fn handle_focus(&mut self) -> bool {
+        match self.selection.clone() {
+            Some(Selection::Agent(id)) => {
+                if let Some(agent) = self.agents.iter().find(|a| a.id == id) {
+                    if let Some(pane_id) = agent.pane_id {
+                        zellij_focus_pane(pane_id);
+                        self.status_message = None;
+                    } else {
+                        self.status_message = Some("agent has no pane bound yet".into());
+                    }
+                }
+                true
+            }
+            Some(Selection::Workspace(id)) => {
+                if let Some(ws) = self.workspaces.iter().find(|w| w.id == id) {
+                    // Each workspace runs in a dedicated zellij session named rally-{name}.
+                    zellij_switch_session(&format!("rally-{}", ws.name));
+                    self.status_message = None;
+                }
+                true
+            }
+            None => false,
+        }
+    }
+
     fn action_feedback(&mut self, action: &str) -> bool {
         let target = match &self.selection {
             Some(Selection::Agent(id)) => id.clone(),
@@ -577,6 +614,39 @@ struct StateSnapshotResponse {
     agents: Vec<AgentInfo>,
     #[serde(default)]
     inbox_items: Vec<InboxItemInfo>,
+}
+
+/// Wrap `focus_terminal_pane` so tests (native target) compile without the wasm import.
+fn zellij_focus_pane(pane_id: u32) {
+    #[cfg(not(test))]
+    focus_terminal_pane(pane_id, false, false);
+    let _ = pane_id;
+}
+
+/// Wrap `switch_session` so tests (native target) compile without the wasm import.
+fn zellij_switch_session(session: &str) {
+    #[cfg(not(test))]
+    switch_session(Some(session));
+    let _ = session;
+}
+
+/// Apply a subtle bg tint to a terminal pane to reflect agent state (S4.3).
+/// `pane_bg` is a hex string (e.g. `"#001800"`) or `None` to clear the tint.
+fn zellij_set_pane_color(pane_id: u32, pane_bg: Option<&str>) {
+    #[cfg(not(test))]
+    set_pane_color(
+        PaneId::Terminal(pane_id),
+        None,
+        pane_bg.map(str::to_owned),
+    );
+    let _ = (pane_id, pane_bg);
+}
+
+/// Rename a terminal pane with a state-emoji prefix (S4.4).
+fn zellij_rename_pane(pane_id: u32, name: &str) {
+    #[cfg(not(test))]
+    rename_terminal_pane(pane_id, name);
+    let _ = (pane_id, name);
 }
 
 fn truncate(s: &str, max: usize) -> &str {
@@ -806,26 +876,53 @@ mod tests {
     }
 
     #[test]
-    fn action_feedback_for_agent() {
-        let mut plugin = RallyPlugin {
-            selection: Some(Selection::Agent("a1".to_string())),
-            ..Default::default()
-        };
-        assert!(plugin.handle_key(BareKey::Char('f')));
-        assert_eq!(plugin.status_message.as_deref(), Some("focus: a1"));
-    }
-
-    #[test]
-    fn action_feedback_for_workspace() {
-        let mut plugin = RallyPlugin {
-            selection: Some(Selection::Workspace("w1".to_string())),
-            ..Default::default()
-        };
+    fn focus_agent_without_pane_shows_status() {
+        let mut plugin = RallyPlugin::default();
+        load_snapshot(
+            &mut plugin,
+            r#"{"id":"w1","name":"api","canonical_key":"api"}"#,
+            r#"{"id":"a1","workspace_id":"w1","role":"impl","runtime":"cc","state":"running"}"#,
+        );
+        // Select the agent (which has no pane_id in the test payload).
+        plugin.selection = Some(Selection::Agent("a1".to_string()));
         assert!(plugin.handle_key(BareKey::Char('f')));
         assert_eq!(
             plugin.status_message.as_deref(),
-            Some("focus: workspace:w1")
+            Some("agent has no pane bound yet")
         );
+    }
+
+    #[test]
+    fn focus_agent_with_pane_clears_status() {
+        let mut plugin = RallyPlugin::default();
+        // Agent with explicit pane_id.
+        let payload = r#"{
+            "kind":"state_snapshot","version":1,
+            "workspaces":[{"id":"w1","name":"api","canonical_key":"api"}],
+            "agents":[{"id":"a1","workspace_id":"w1","role":"impl","runtime":"cc","state":"running","pane_id":7}],
+            "inbox_items":[]
+        }"#;
+        plugin.apply_snapshot_bytes(payload.as_bytes());
+        plugin.selection = Some(Selection::Agent("a1".to_string()));
+        plugin.status_message = Some("old message".into());
+        assert!(plugin.handle_key(BareKey::Char('f')));
+        // zellij_focus_pane is a no-op in tests; status_message should be cleared.
+        assert_eq!(plugin.status_message, None);
+    }
+
+    #[test]
+    fn focus_workspace_clears_status() {
+        let mut plugin = RallyPlugin::default();
+        load_snapshot(
+            &mut plugin,
+            r#"{"id":"w1","name":"api","canonical_key":"api"}"#,
+            r#""#,
+        );
+        plugin.selection = Some(Selection::Workspace("w1".to_string()));
+        plugin.status_message = Some("old message".into());
+        assert!(plugin.handle_key(BareKey::Char('f')));
+        // zellij_switch_session is a no-op in tests; status_message should be cleared.
+        assert_eq!(plugin.status_message, None);
     }
 
     #[test]
