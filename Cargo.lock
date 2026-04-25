@@ -2027,6 +2027,7 @@ dependencies = [
  "assert_cmd",
  "clap 4.6.1",
  "compact_str",
+ "crossterm",
  "predicates",
  "rally-capture",
  "rally-config",
