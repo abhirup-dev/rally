@@ -204,6 +204,7 @@ impl ZellijPlugin for RallyPlugin {
                 true
             }
             Event::PaneUpdate(manifest) => {
+                let total_reported: usize = manifest.panes.values().map(|v| v.len()).sum();
                 self.panes = manifest
                     .panes
                     .into_iter()
@@ -225,6 +226,11 @@ impl ZellijPlugin for RallyPlugin {
                     })
                     .collect();
                 self.panes.sort_by_key(|p| (p.tab_position, p.id));
+                eprintln!(
+                    "[rally-plugin] PaneUpdate: kept {}/{} panes (filtered plugin/floating/suppressed)",
+                    self.panes.len(),
+                    total_reported
+                );
                 self.ensure_selection();
                 true
             }
@@ -288,6 +294,11 @@ impl RallyPlugin {
 
     fn apply_snapshot(&mut self, snapshot: StateSnapshotResponse) -> bool {
         if self.state_version.is_some_and(|v| snapshot.version <= v) {
+            eprintln!(
+                "[rally-plugin] dropping stale snapshot v{} (current: v{})",
+                snapshot.version,
+                self.state_version.unwrap_or(0)
+            );
             return false;
         }
 

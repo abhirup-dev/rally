@@ -1,4 +1,4 @@
-use tracing::{debug, instrument};
+use tracing::{debug, instrument, warn};
 
 use crate::session::SessionHandle;
 
@@ -188,10 +188,14 @@ fn parse_pane_id(output: &str) -> anyhow::Result<u32> {
     let id_str = output
         .strip_prefix("terminal_")
         .or_else(|| output.strip_prefix("plugin_"))
-        .ok_or_else(|| anyhow::anyhow!("unexpected pane ID format: {output:?}"))?;
-    id_str
-        .parse()
-        .map_err(|e| anyhow::anyhow!("failed to parse pane ID from {output:?}: {e}"))
+        .ok_or_else(|| {
+            warn!(output, "unexpected pane ID format from zellij new-pane stdout");
+            anyhow::anyhow!("unexpected pane ID format: {output:?}")
+        })?;
+    id_str.parse().map_err(|e| {
+        warn!(output, "failed to parse numeric pane ID");
+        anyhow::anyhow!("failed to parse pane ID from {output:?}: {e}")
+    })
 }
 
 #[cfg(test)]

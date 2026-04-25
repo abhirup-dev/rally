@@ -2,6 +2,8 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 use std::process::Command;
 
+use tracing::{debug, warn};
+
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
 use crossterm::{cursor, execute, style};
@@ -93,39 +95,42 @@ fn execute_action(action: usize, pane_id: u32, cwd_str: &str) -> anyhow::Result<
 }
 
 fn zellij_split(direction: &str, cwd_str: &str) -> anyhow::Result<()> {
+    debug!(direction, cwd_str, "pane menu: split");
     let status = Command::new("zellij")
         .args(["action", "new-pane", "--direction", direction, "--cwd", cwd_str])
         .status()?;
     if !status.success() {
+        warn!(direction, cwd_str, ?status, "zellij new-pane failed");
         anyhow::bail!("zellij new-pane failed: {status}");
     }
     Ok(())
 }
 
 fn zellij_restart(pane_id: u32, cwd_str: &str) -> anyhow::Result<()> {
+    debug!(pane_id, cwd_str, "pane menu: restart");
     let pane_id_str = pane_id.to_string();
 
-    // 1. Focus the target pane (by ID) so close-pane targets it.
     let status = Command::new("zellij")
         .args(["action", "focus-pane-id", &pane_id_str])
         .status()?;
     if !status.success() {
+        warn!(pane_id, ?status, "focus-pane-id failed — target pane may be stale");
         anyhow::bail!("zellij focus-pane-id {pane_id} failed: {status}");
     }
 
-    // 2. Close the now-focused target pane.
     let status = Command::new("zellij")
         .args(["action", "close-pane"])
         .status()?;
     if !status.success() {
+        warn!(pane_id, ?status, "close-pane failed after focus");
         anyhow::bail!("zellij close-pane failed: {status}");
     }
 
-    // 3. Open a new terminal in the same CWD.
     let status = Command::new("zellij")
         .args(["action", "new-pane", "--cwd", cwd_str])
         .status()?;
     if !status.success() {
+        warn!(cwd_str, ?status, "new-pane after restart failed");
         anyhow::bail!("zellij new-pane failed: {status}");
     }
     Ok(())
