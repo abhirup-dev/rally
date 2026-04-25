@@ -13,6 +13,7 @@ use zellij_tile::prelude::*;
 use zellij_widgets::prelude::{Line, Modifier, Paragraph, PluginPane, Span, Style, Text};
 
 mod theme;
+mod tree_merge;
 mod widgets;
 
 /// Tracks which node in the tree is currently selected, by stable ID rather than by index so
@@ -44,6 +45,12 @@ fn node_to_selection(node: &TreeNode) -> Selection {
         TreeNode::Pane { id, .. } => Selection::Pane(*id),
         TreeNode::Agent { id, .. } => Selection::Agent(id.clone()),
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DensityMode {
+    Normal,
+    Compact,
 }
 
 /// Minimal tab info kept from Zellij's TabUpdate event.
@@ -87,6 +94,9 @@ struct RallyPlugin {
     permission_denied: bool,
     last_error: Option<String>,
     rally_cli_path: String,
+    density: DensityMode,
+    show_bare_terminals: bool,
+    default_collapsed: bool,
     /// Tabs in the current Zellij session (from TabUpdate events).
     tabs: Vec<ZellijTab>,
     /// Tiled, selectable, non-plugin panes in the current session (from PaneUpdate events).
@@ -114,6 +124,9 @@ impl Default for RallyPlugin {
             permission_denied: false,
             last_error: None,
             rally_cli_path: "rally".to_string(),
+            density: DensityMode::Normal,
+            show_bare_terminals: true,
+            default_collapsed: false,
             tabs: Vec::new(),
             panes: Vec::new(),
             pane_cwds: BTreeMap::new(),
@@ -142,6 +155,15 @@ impl ZellijPlugin for RallyPlugin {
 
         if let Some(cli_path) = config.get("rally_cli_path") {
             self.rally_cli_path = cli_path.clone();
+        }
+        if config.get("sidebar_density").map(|s| s.as_str()) == Some("compact") {
+            self.density = DensityMode::Compact;
+        }
+        if config.get("show_bare_terminals").map(|s| s.as_str()) == Some("false") {
+            self.show_bare_terminals = false;
+        }
+        if config.get("default_collapsed").map(|s| s.as_str()) == Some("true") {
+            self.default_collapsed = true;
         }
     }
 
@@ -320,78 +342,16 @@ impl RallyPlugin {
 
     // ── Tree model ────────────────────────────────────────────────────────
 
-    /// Build the ordered list of visible tree nodes, respecting collapsed state.
-    /// If Zellij tab/pane data is available, shows Tab → Pane/Agent hierarchy.
-    /// Otherwise falls back to daemon-only Workspace → Agent view.
     fn visible_tree_nodes(&self) -> Vec<TreeNode> {
-        let mut nodes = Vec::new();
-
-        if !self.tabs.is_empty() {
-            // Zellij-native view: Tab → Pane (with agent overlay).
-            for tab in &self.tabs {
-                nodes.push(TreeNode::Tab {
-                    position: tab.position,
-                    name: tab.name.clone(),
-                });
-
-                let tab_key = format!("tab:{}", tab.position);
-                if self.collapsed.contains(&tab_key) {
-                    continue;
-                }
-
-                for pane in self.panes.iter().filter(|p| p.tab_position == tab.position) {
-                    if let Some(agent) = self.agents.iter().find(|a| a.pane_id == Some(pane.id)) {
-                        if self.agent_matches_filter(agent) {
-                            nodes.push(TreeNode::Agent {
-                                id: agent.id.clone(),
-                                workspace_id: agent.workspace_id.clone(),
-                            });
-                        }
-                    } else {
-                        nodes.push(TreeNode::Pane {
-                            id: pane.id,
-                            tab_position: pane.tab_position,
-                        });
-                    }
-                }
-            }
-        } else {
-            // Fallback: daemon-only view (before TabUpdate fires).
-            for ws in &self.workspaces {
-                nodes.push(TreeNode::Workspace { id: ws.id.clone() });
-
-                let workspace_agents: Vec<&AgentInfo> = self
-                    .agents
-                    .iter()
-                    .filter(|a| a.workspace_id == ws.id && self.agent_matches_filter(a))
-                    .collect();
-
-                let is_collapsed = self.collapsed.contains(&ws.id);
-                let filter_forces_expand =
-                    !self.filter.is_empty() && !workspace_agents.is_empty();
-
-                if !is_collapsed || filter_forces_expand {
-                    for agent in workspace_agents {
-                        nodes.push(TreeNode::Agent {
-                            id: agent.id.clone(),
-                            workspace_id: ws.id.clone(),
-                        });
-                    }
-                }
-            }
-        }
-
-        nodes
-    }
-
-    fn agent_matches_filter(&self, agent: &AgentInfo) -> bool {
-        if self.filter.is_empty() {
-            return true;
-        }
-        agent.role.contains(&self.filter)
-            || agent.runtime.contains(&self.filter)
-            || agent.state.contains(&self.filter)
-            || agent.id.contains(&self.filter)
+        tree_merge::merge_tree(
+            &self.tabs,
+            &self.panes,
+            &self.workspaces,
+            &self.agents,
+            &self.collapsed,
+            &self.filter,
+            self.show_bare_terminals,
+        )
     }
 
     /// Index of the selected node in the current visible list (O(n) but n is tiny).
@@ -505,10 +465,14 @@ impl RallyPlugin {
                 if self.collapsed.remove(&ws_id) {
                     // Was collapsed; expanding is the action.
                 } else {
+                    let filter = &self.filter;
                     let first_child = self
                         .agents
                         .iter()
-                        .find(|a| a.workspace_id == ws_id && self.agent_matches_filter(a))
+                        .find(|a| {
+                            a.workspace_id == ws_id
+                                && tree_merge::agent_matches_filter(a, filter)
+                        })
                         .map(|a| a.id.clone());
                     if let Some(agent_id) = first_child {
                         self.selection = Some(Selection::Agent(agent_id));
@@ -611,6 +575,7 @@ impl RallyPlugin {
             &visible_nodes,
             selected_node,
             &self.pane_cwds,
+            self.density,
             cols,
         );
 
@@ -664,6 +629,13 @@ impl RallyPlugin {
             }
             BareKey::Char('l') | BareKey::Right => {
                 self.handle_expand();
+                true
+            }
+            BareKey::Char('d') => {
+                self.density = match self.density {
+                    DensityMode::Normal => DensityMode::Compact,
+                    DensityMode::Compact => DensityMode::Normal,
+                };
                 true
             }
             BareKey::Char('i') => {
@@ -815,6 +787,10 @@ impl RallyPlugin {
     }
 }
 
+/// Raw entity snapshot from the daemon. Contains only domain entities — NO sidebar
+/// projection or layout data. The plugin merges this with Zellij TabUpdate/PaneUpdate
+/// events client-side (see `tree_merge` module). The daemon cannot compute tab-based
+/// grouping because it never sees Zellij events.
 #[derive(Deserialize)]
 struct StateSnapshotResponse {
     version: u64,
@@ -890,6 +866,7 @@ fn help_lines(width: usize) -> Vec<Line<'static>> {
         )),
         Line::from("j/k      move selection"),
         Line::from("h/l      collapse/expand node"),
+        Line::from("d        toggle density mode"),
         Line::from("f        focus selected node"),
         Line::from("a        action menu"),
         Line::from("K        ack selected item"),

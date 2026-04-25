@@ -2,6 +2,7 @@ use std::borrow::Cow;
 use std::collections::HashSet;
 
 use crate::theme::{bare_terminal_theme, state_theme};
+use crate::DensityMode;
 
 use super::{truncate_chars, AgentInfo, TreeNode, WorkspaceInfo};
 use std::collections::BTreeMap;
@@ -19,6 +20,7 @@ pub fn render_tree_lines(
     visible_nodes: &[TreeNode],
     selected: Option<&TreeNode>,
     pane_cwds: &BTreeMap<u32, PathBuf>,
+    density: DensityMode,
     cols: usize,
 ) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
@@ -57,7 +59,7 @@ pub fn render_tree_lines(
                 } else {
                     "├──"
                 };
-                agent_line(id, agents, connector, cols, is_selected)
+                agent_line(id, agents, connector, density, cols, is_selected)
             }
         };
         lines.push(line);
@@ -111,6 +113,7 @@ fn agent_line(
     agent_id: &str,
     agents: &[AgentInfo],
     connector: &'static str,
+    density: DensityMode,
     cols: usize,
     selected: bool,
 ) -> Line<'static> {
@@ -124,14 +127,19 @@ fn agent_line(
     let theme = state_theme(&agent.state);
     let glyph = theme.glyph;
     let glyph_style = theme.style;
-    let branch_tag = agent
-        .branch
-        .as_deref()
-        .map(|b| format!(" [{b}]"))
-        .unwrap_or_default();
-    let suffix = format!(" ({}){}", agent.runtime, branch_tag);
 
-    // " ├── ● " = 1 space + 3 connector chars + 1 space + 1 glyph col + 1 space = 7 display cols
+    let suffix = match density {
+        DensityMode::Compact => String::new(),
+        DensityMode::Normal => {
+            let branch_tag = agent
+                .branch
+                .as_deref()
+                .map(|b| format!(" [{b}]"))
+                .unwrap_or_default();
+            format!(" ({}){}", agent.runtime, branch_tag)
+        }
+    };
+
     let prefix_len = 7usize;
     let max_role = cols
         .saturating_sub(prefix_len + suffix.chars().count())
@@ -283,7 +291,7 @@ mod tests {
             },
         ];
 
-        let lines = render_tree_lines(&workspaces, &agents, &collapsed, &visible_nodes, None, &BTreeMap::new(), 40);
+        let lines = render_tree_lines(&workspaces, &agents, &collapsed, &visible_nodes, None, &BTreeMap::new(), DensityMode::Normal, 40);
         let text = lines_text(&lines);
 
         assert!(text.contains("▼ api"), "expanded workspace glyph");
@@ -305,7 +313,7 @@ mod tests {
             id: "w1".to_string(),
         }];
 
-        let lines = render_tree_lines(&workspaces, &agents, &collapsed, &visible_nodes, None, &BTreeMap::new(), 40);
+        let lines = render_tree_lines(&workspaces, &agents, &collapsed, &visible_nodes, None, &BTreeMap::new(), DensityMode::Normal, 40);
         let text = lines_text(&lines);
 
         assert!(text.contains("▶ api"), "collapsed workspace glyph");
@@ -321,7 +329,7 @@ mod tests {
             id: "w1".to_string(),
         }];
 
-        let lines = render_tree_lines(&workspaces, &agents, &collapsed, &visible_nodes, None, &BTreeMap::new(), 40);
+        let lines = render_tree_lines(&workspaces, &agents, &collapsed, &visible_nodes, None, &BTreeMap::new(), DensityMode::Normal, 40);
         let text = lines_text(&lines);
 
         assert!(text.contains("◆ api"), "empty workspace uses diamond");
@@ -350,6 +358,7 @@ mod tests {
             &visible_nodes,
             Some(selected),
             &BTreeMap::new(),
+            DensityMode::Normal,
             40,
         );
 
