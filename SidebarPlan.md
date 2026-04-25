@@ -375,7 +375,7 @@ Milestone: quality gate green, snapshot reads are O(1),             │
 **Critique.md items addressed:**
 - **§5 (Snapshots not real projections)**: S0.3 is the foundational fix. Once the
   daemon maintains a live `ArcSwap<StateSnapshot>`, ALL consumers (sidebar plugin,
-  CLI, MCP) get cheap O(1) reads. This unblocks S3's reactive push and S6's projection.
+  CLI, MCP) get cheap O(1) reads. This unblocks S3's reactive push.
 - **§4 (IPC framing)**: S0.4 and S0.5 add per-request timeout and max payload size.
   These protect every consumer, not just the sidebar's floating menu.
 - **§8 (Clippy)**: S0.1 cleans up existing warnings. S0.2 prevents new ones.
@@ -391,7 +391,7 @@ patching them into each sidebar phase.
 ### Phase S1 — Rendering foundation (Ratatui + background workers)
 
 > **Goal**: Replace the raw ANSI string builder with Ratatui via `zellij_widgets`.
-> Move CLI calls and JSON parsing off the render thread. Eliminate `_attach` shim.
+> Move CLI calls and JSON parsing off the render thread.
 > This is the foundation everything else builds on.
 
 **Deliverables:**
@@ -404,35 +404,38 @@ S1.3  Port WorkspaceTree widget to Ratatui styled spans           │
        └─ depends on: S1.2                                        │
 S1.4  Port InboxSummary + StatusBar to Ratatui                    │
        └─ depends on: S1.2                                        │
-S1.5  Add background worker for run_command + JSON parse          │
+S1.5  Add background worker for run_command/pipe + JSON parse     │
        └─ depends on: nothing (parallel with S1.2-S1.4)           │
 S1.6  Query session env vars (RALLY_SOCKET_PATH) at plugin load   │
        └─ depends on: nothing (parallel)                           │
-S1.7  Eliminate _attach shim: use `new-pane --blocking` for       │
-       pane ID return (Zellij 0.44)                                │
-       └─ depends on: nothing (parallel, daemon-side change)       │
-S1.8  Golden snapshot tests updated for Ratatui output             │
+S1.7  Golden snapshot tests updated for Ratatui output             │
        └─ depends on: S1.3, S1.4                                  │
                                                                    │
 Milestone: sidebar renders identically via Ratatui, CLI calls     │
-           are non-blocking, _attach shim removed                  │
+           are non-blocking                                        │
 ```
 
 **Zellij 0.44 features adopted:**
 - Background workers (move JSON parse off render thread)
 - Query environment variables (dynamic plugin config)
-- `new-pane --blocking` with pane ID return (eliminates `_attach`)
 
 **Why S1 first**: Ratatui changes the entire rendering surface. Doing it later
 would mean rewriting every widget twice. Background workers prevent UI stalls
 that would mask bugs in later phases.
 
+**Note on `_attach` shim**: The `_attach` shim is NOT addressed in S1. It is
+not just a pane ID retrieval mechanism — it bootstraps runtime context (env,
+hooks, pane registration). Replacing it requires a proper launch-spec and
+lifecycle design, which is tracked separately. `new-pane` already returns the
+pane ID without `--blocking` (`--blocking` blocks until the pane *closes*, not
+until it's created). Pane ID correlation for sidebar display already works via
+the existing `BindPane` IPC.
+
 **Testing focus:**
 - Unit: `RatatuiRenderer` produces expected styled spans for known `AgentInfo` data
 - Unit: `StateTheme` glyph/color lookups return correct values for each `AgentState`
 - Unit: Background worker message passing (mock `run_command` → verify JSON parse result delivered)
-- Integration: golden snapshot tests (S1.8) — render full sidebar with fixture data, compare against `.golden` files
-- Integration: `_attach` elimination — spawn pane via `--blocking`, verify `pane_id` returned matches real pane
+- Integration: golden snapshot tests (S1.7) — render full sidebar with fixture data, compare against `.golden` files
 
 **Codebase impact:**
 | File / module | Impact | Detail |
@@ -443,7 +446,6 @@ that would mask bugs in later phases.
 | `crates/rally-plugin/src/widgets/inbox_summary.rs` | **Rewrite** | Port to Ratatui styled text |
 | `crates/rally-plugin/src/widgets/status_bar.rs` | **Rewrite** | Port to Ratatui layout |
 | `crates/rally-plugin/src/main.rs` | **Modify** | `render()` switches from `print!()` to Ratatui `terminal.draw()`. Add background worker wiring |
-| `crates/rally-host-zellij/src/pane.rs` | **Modify** | `_attach` shim replaced with `--blocking` flag on `new-pane` |
 | `crates/rally-plugin/tests/` | **Rewrite** | Golden snapshots regenerated for Ratatui output format |
 
 **Critique.md incorporation:**
@@ -528,27 +530,43 @@ S3.1  Daemon EventBus subscriber that triggers pipe push on        │
 S3.2  Debounce pipe push to max 4 Hz (250ms floor)                 │
        └─ depends on: S3.1                                         │
 S3.3  Plugin switches to push-primary: pipe() is main data path    │
-       └─ depends on: S3.1                                         │
+       (pipe messages are routed to background worker for parse)    │
+       └─ depends on: S3.1, S1.5                                   │
 S3.4  Plugin timer reduced to 30s heartbeat fallback               │
        └─ depends on: S3.3                                         │
-S3.5  Daemon-side CWD polling: every 2s, check agent process CWD   │
-       (OSC 7 or /proc/pid/cwd or lsof -p on macOS)                │
+S3.5  Plugin subscribes to Event::CwdChanged(PaneId, PathBuf)      │
+       Primary CWD tracking path — Zellij fires this when           │
+       a terminal pane's CWD changes (via OSC 7)                    │
+       → plugin forwards to daemon via IPC (UpdateAgentCwd)         │
        └─ depends on: S2.1 (cwd field exists)                       │
-S3.6  CWD change detected → update agent entity → bump version     │
-       → auto-push to sidebar                                      │
+S3.6  CWD change received → update agent entity → re-run git       │
+       discovery (branch/root) → bump version → auto-push          │
        └─ depends on: S3.5, S3.1                                   │
+S3.7  (Optional) Daemon-side CWD polling fallback: every 5s,       │
+       check /proc/pid/cwd or lsof -p on macOS for panes where     │
+       Event::CwdChanged is not firing (SSH sessions, subshells     │
+       that don't emit OSC 7)                                       │
+       └─ depends on: S3.6 (same update path)                      │
                                                                     │
 Milestone: sidebar reacts to state changes in <250ms,              │
-           CWD updates are live                                     │
+           CWD updates are live via native Zellij events            │
 ```
 
-**Depends on**: Phase S2 (CWD field for S3.5-S3.6)
+**Depends on**: Phase S2 (CWD field for S3.5-S3.7)
+
+**CWD tracking strategy**: Zellij's plugin API fires
+`Event::CwdChanged(PaneId, PathBuf, Vec<ClientId>)` when a terminal pane's CWD
+changes. This is the **primary path** — zero polling, instant, native. Daemon-side
+polling (S3.7) is an **optional fallback** for edge cases where OSC 7 is not
+emitted (SSH sessions, some subshells). Most agent runtimes (Claude Code, Codex,
+etc.) run in shells that emit OSC 7 properly.
 
 **Testing focus:**
 - Unit: EventBus subscriber fires callback on `state_version` bump
 - Unit: debounce logic — rapid bumps (10 in 50ms) result in ≤4 pipe pushes
-- Unit: CWD polling detects change from `/a` to `/b` and emits update event
-- Unit: CWD polling handles dead process gracefully (no panic, marks agent unknown)
+- Unit: `Event::CwdChanged` handler forwards correct pane_id + path to daemon
+- Unit: CWD fallback polling detects change from `/a` to `/b` and emits update
+- Unit: CWD fallback polling handles dead process gracefully (no panic)
 - Integration: modify agent state → verify plugin receives pipe message within 500ms
 - Integration: plugin fallback — if pipe push stops, 30s heartbeat still refreshes sidebar
 
@@ -556,22 +574,20 @@ Milestone: sidebar reacts to state changes in <250ms,              │
 | File / module | Impact | Detail |
 |---|---|---|
 | `crates/rally-daemon/src/daemon.rs` | **Modify** | Add EventBus subscriber task that pushes to plugin via `zellij pipe` |
-| `crates/rally-daemon/src/services/agent.rs` | **Modify** | Add supervised CWD polling task per agent |
-| `crates/rally-plugin/src/main.rs` | **Modify** | `pipe()` becomes primary data handler; `timer()` reduced to 30s heartbeat |
+| `crates/rally-plugin/src/main.rs` | **Modify** | Subscribe to `Event::CwdChanged`, forward to daemon. `pipe()` becomes primary data handler; `timer()` reduced to 30s heartbeat |
+| `crates/rally-daemon/src/services/agent.rs` | **Modify** | Add `UpdateAgentCwd` IPC handler. Optionally add fallback CWD polling task |
 | `crates/rally-events/src/lib.rs` | **Modify** | Ensure `ArcSwap` snapshot updates trigger subscriber notifications |
 
 **Critique.md incorporation:**
 - **§5 (Snapshots not real projections)**: This is the phase where polling dies. The
   daemon must build a real in-memory projection (via `ArcSwap<StateSnapshot>`) that is
   updated on every domain event, then pushed to the plugin. The plugin never reconstructs
-  state from SQLite — it consumes the pre-built projection. This directly addresses
-  Critique §5's "target shape."
+  state from SQLite — it consumes the pre-built projection.
 - **§3 (Coarse locking)**: The pipe push path must NOT hold the `Store` Mutex. The push
-  reads from the `ArcSwap` snapshot (lock-free), serializes, and sends. This is the first
-  concrete step toward decoupling reads from the write lock.
-- **§1 (Capture polling)**: The CWD polling task (S3.5) should follow the same
-  "long-lived worker" pattern recommended in Critique §1 — one supervised task per
-  agent, not a new process spawn per poll cycle.
+  reads from the `ArcSwap` snapshot (lock-free), serializes, and sends.
+- **§1 (Capture polling)**: The CWD fallback polling task (S3.7) should follow the
+  "long-lived worker" pattern — one supervised task per agent, not a new process
+  spawn per poll cycle. But the primary path (S3.5) avoids polling entirely.
 
 ---
 
@@ -641,13 +657,13 @@ S5.3  `rally pane menu` executes chosen action:                    │
        • Restart → rally agent restart <id> (agent) or              │
                    respawn shell in same cwd (terminal)              │
        • Stop → rally agent stop <id>                               │
-       • Focus → exit menu (plugin refocuses pane)                  │
+       • Focus → runs `zellij action focus-terminal-pane <id>`      │
        └─ depends on: S5.1                                         │
 S5.4  Floating pane auto-closes after action completes             │
        └─ depends on: S5.2                                         │
 S5.5  Plugin: `f` key still does direct focus_terminal_pane()      │
        (shortcut, no floating window needed)                        │
-       └─ depends on: S1 (background workers for non-blocking)      │
+       └─ depends on: nothing (instantaneous SDK call)              │
                                                                     │
 Milestone: user can restart, stop, focus agents from sidebar       │
            via a clean floating action menu                         │
@@ -683,71 +699,102 @@ actions per session type.
 
 ---
 
-### Phase S6 — Grouped views and configurable layout
+### Phase S6 — Plugin-side tree merge and configurable layout
 
-> **Goal**: Sidebar groups agents by project/workspace/state. Initially
-> hardcoded, but architecture supports runtime config insertion — NOT
-> compile-time constants.
+> **Goal**: Formalize the plugin's hybrid tree construction and add user-facing
+> configuration. The plugin merges two data sources client-side — daemon entities
+> and Zellij session topology. No daemon-side projection needed.
+
+**Design decision** (ral-7qo6): The daemon cannot compute tab-based grouping
+because it never sees `TabUpdate`/`PaneUpdate` events. The plugin already merges
+both sources in `visible_tree_nodes()`. S6 formalizes this.
+
+```
+Data ownership:
+
+  ┌─────────────┐     raw entities     ┌──────────────────┐
+  │   Daemon     │ ──────────────────→ │                  │
+  │ workspaces   │   (pipe / snapshot)  │    Plugin        │
+  │ agents       │                      │   TreeMerge      │
+  │ inbox_items  │                      │                  │
+  └─────────────┘                      │   merges both    │
+                                        │   → builds tree  │
+  ┌─────────────┐   Zellij events      │   → renders      │
+  │   Zellij     │ ──────────────────→ │                  │
+  │ TabUpdate    │   (plugin API)       │                  │
+  │ PaneUpdate   │                      │                  │
+  │ CwdChanged   │                      │                  │
+  └─────────────┘                      └──────────────────┘
+
+  Primary view: Tab → Pane/Agent (when TabUpdate fires)
+  Fallback view: Workspace → Agent (daemon-only, before events arrive)
+```
 
 **Deliverables:**
 
 ```
-S6.1  Daemon-side SidebarProjection builder                        │
-       Groups agents by workspace (hardcoded initial key)            │
-       └─ depends on: S2 (agent context fields)                     │
-S6.2  SidebarProjection output as structured JSON in snapshot       │
-       (sections: [{type, title, items}])                            │
+S6.1  Extract TreeMerge module from RallyPlugin                    │
+       Move visible_tree_nodes() into standalone, testable          │
+       tree_merge.rs as a pure function:                            │
+       fn build_tree(tabs, panes, workspaces, agents,               │
+                     collapsed, filter) -> Vec<TreeNode>            │
+       └─ depends on: nothing (pure refactor)                       │
+S6.2  Daemon snapshot unchanged — raw entities only                 │
+       Document: StateSnapshotResponse stays { version,             │
+       workspaces, agents, inbox_items }. No sidebar field.         │
+       CLI/MCP/tests get raw entities. Plugin does the merge.       │
+       └─ depends on: nothing (documentation + guardrail)           │
+S6.3  TreeMerge test suite                                         │
+       Comprehensive unit tests for the extracted function:          │
+       • Tab→Pane→Agent hierarchy with correct ordering             │
+       • Agent overlays pane when agent.pane_id matches             │
+       • Fallback to Workspace→Agent when no tabs                   │
+       • Collapsed tabs hide children                               │
+       • Filter affects agents but not bare panes                   │
+       • Empty state (no tabs, no workspaces)                       │
        └─ depends on: S6.1                                         │
-S6.3  Plugin renders sections from daemon projection               │
-       (not hard-coded WorkspaceTree)                                │
-       └─ depends on: S6.2, S1 (Ratatui)                            │
-S6.4  GroupBy key stored as runtime String, not compile-time enum   │
-       └─ depends on: S6.1                                         │
-S6.5  Density mode: "compact" (glyph + name) vs "normal"           │
-       (glyph + name + cwd + branch)                                │
-       └─ depends on: S6.3, S2 (context fields to display)          │
-S6.6  Future-proof: config.jsonc schema for sidebar.group_by,       │
-       sidebar.sections, sidebar.density — parsed at runtime         │
-       └─ depends on: S6.4, S6.5                                   │
+S6.4  Density mode: "compact" (glyph + name) vs "normal"           │
+       (glyph + name + cwd + branch). Toggle with `d` key.         │
+       └─ depends on: S6.1, S2 (context fields to display)          │
+S6.5  config.jsonc schema for sidebar settings                     │
+       sidebar.density, sidebar.show_bare_terminals,                │
+       sidebar.default_collapsed — parsed at plugin load            │
+       └─ depends on: S6.4                                         │
                                                                     │
-Milestone: sidebar layout is projection-driven, not hard-coded.    │
-           Ready for future config.jsonc customization.             │
+Milestone: tree construction is formalized, tested, and             │
+           configurable. No daemon-side projection needed.          │
 ```
 
-**Depends on**: Phase S1 (Ratatui), Phase S2 (context fields)
+**Depends on**: Phase S1 (Ratatui), Phase S2 (context fields for density mode)
 
-**Note**: Initial grouping is hardcoded to `workspace`. The architecture
-uses runtime strings for group keys and section definitions — config.jsonc
-support is wired but the config UI is future scope.
+**Note**: Grouping is automatic — Tab-based (primary) when Zellij events
+are available, Workspace-based (fallback) when they're not. No GroupBy config
+needed; the data source determines the hierarchy.
 
 **Testing focus:**
-- Unit: `SidebarProjection` groups agents correctly by workspace key
-- Unit: `SidebarProjection` handles empty workspace (no agents) gracefully
-- Unit: GroupBy key is a runtime `String`, not a compile-time enum (pass arbitrary key)
-- Unit: density "compact" mode renders glyph + name only; "normal" includes cwd + branch
-- Unit: config.jsonc schema validates `sidebar.group_by`, `sidebar.density` fields
-- Integration: daemon snapshot includes structured `sections` JSON array
-- Integration: plugin renders sections from projection, not from hard-coded WorkspaceTree
+- Unit: `build_tree()` produces correct Tab→Pane→Agent hierarchy from mixed inputs
+- Unit: agent with `pane_id` matching a pane replaces that pane's node
+- Unit: fallback to Workspace→Agent when `tabs` is empty
+- Unit: collapsed set hides tab children; filter narrows agents
+- Unit: density "compact" renders glyph + name only
+- Unit: config.jsonc schema validates sidebar fields
+- Integration: plugin renders tab tree with live Zellij events
+- Integration: CLI `rally --json _plugin-state` returns raw entities (no regression)
 
 **Codebase impact:**
 | File / module | Impact | Detail |
 |---|---|---|
-| `crates/rally-daemon/src/projection/` | **New module** | `SidebarProjection` builder — groups/sorts agents into sections |
-| `crates/rally-daemon/src/services/agent.rs` | **Modify** | Snapshot includes `SidebarProjection` output instead of raw agent list |
-| `crates/rally-proto/src/v1/mod.rs` | **Modify** | Add `SidebarSection`, `SidebarRow` types to the view model |
-| `crates/rally-plugin/src/widgets/workspace_tree.rs` | **Rewrite** | Becomes a generic section renderer consuming `SidebarSection` data |
-| `crates/rally-plugin/src/widgets/mod.rs` | **Modify** | Widget registry renders arbitrary section types from projection |
-| `crates/rally-config/src/lib.rs` | **Modify** | Add `sidebar` config section schema |
+| `crates/rally-plugin/src/tree_merge.rs` | **New file** | Standalone `build_tree()` pure function extracted from `visible_tree_nodes()` |
+| `crates/rally-plugin/src/main.rs` | **Modify** | `visible_tree_nodes()` delegates to `tree_merge::build_tree()`. Add density toggle key. |
+| `crates/rally-plugin/src/widgets/workspace_tree.rs` | **Modify** | Agent line rendering respects density mode |
+| `crates/rally-config/src/lib.rs` | **Modify** | Add `SidebarConfig` struct with density/show_bare_terminals/default_collapsed |
 
 **Critique.md incorporation:**
-- **§5 (Snapshots not real projections)**: This phase completes the projection story.
-  `SidebarProjection` is the first real projection in Rally — it consumes the
-  `ArcSwap<StateSnapshot>` from S3 and computes a grouped, sorted, styled view model.
-  The plugin reads this pre-built projection, never SQLite.
-- **§10 (Runtime spine)**: The daemon's projection updater is a new supervised task
-  that runs on every event bus notification. This is part of the "projection updater"
-  box in Critique §10's target architecture diagram. Use bounded channels for the
-  projection update path to avoid unbounded memory growth under high event rates.
+- ~~§5 (daemon-side projection)~~: No longer applies. The projection is plugin-side.
+  The daemon's `ArcSwap<StateSnapshot>` from S0/S3 still serves raw entities efficiently.
+- **§10 (Runtime spine)**: The plugin's `build_tree()` is the sidebar's projection function.
+  It's a pure function (no IO, no state mutation) that runs on every render — easy to
+  test, easy to reason about. No supervised daemon task needed for this.
 
 ---
 
@@ -767,6 +814,7 @@ initial sidebar build:
 | Custom status pills | cmux-style `rally agent set` CLI | Needs MCP for agent-driven updates |
 | Permission levels | Agent property affecting spawn flags | Design needed |
 | Config-driven action registry | Declares actions per session type in config | Floating menu MVP is sufficient |
+| `_attach` lifecycle redesign | Launch-spec + proper pane context bootstrapping | Not a rendering concern; needs spawn-flow design |
 | Stacked/floating pane management | Zellij 0.42+ stacking API | Too complex for MVP |
 | Viewport text highlighting | Zellij 0.44 highlight API | Nice-to-have |
 | Config hot-reload | Zellij 0.44 config propagation | Simple to add post-MVP |
@@ -788,7 +836,7 @@ initial sidebar build:
    poll to push is a configuration change, not an architectural one.
 
 4. **Pane correlation** — `BindPane` IPC already gives the daemon the `pane_id`
-   for each agent. S1 eliminates `_attach` shim via `--blocking`.
+   for each agent. `new-pane` returns pane ID natively (no `--blocking` needed).
 
 5. **Config-driven behavior** — `rally-config` with JSONC + JSON Schema
    already exists. Adding `sidebar.*` section is straightforward.
@@ -802,12 +850,12 @@ initial sidebar build:
 | No IPC timeout or payload limits | Per-request timeout + max frame | **S0** | Small |
 | Plugin renders raw ANSI, not Ratatui | Migrate to Ratatui via `zellij_widgets` | **S1** | Medium |
 | CLI calls block render thread | Background workers | **S1** | Medium |
-| `_attach` shim complexity | `new-pane --blocking` (Zellij 0.44) | **S1** | Small |
+| `_attach` lifecycle bootstraps too much | Needs launch-spec + lifecycle redesign | **Future** | Medium |
 | `AgentView` too thin (no cwd/branch) | Add fields to proto + core | **S2** | Small |
 | No agent CWD persistence | Add field to core `Agent` entity | **S2** | Small |
 | Plugin polls at 5s | Daemon push + debounce | **S3** | Medium |
 | Actions are feedback-only | Floating action window via `rally pane menu` | **S5** | Medium |
-| No sidebar grouping projection | `SidebarProjection` in daemon | **S6** | Medium |
+| Tree merge logic is inline in main.rs | Extract to testable `TreeMerge` module | **S6** | Small |
 
 ### What requires new architectural concepts 🔴
 
@@ -827,7 +875,7 @@ initial sidebar build:
 Phase S0 (cross-cutting: clippy, ArcSwap projection, IPC hardening)
          │
          ▼
-Phase S1 (Ratatui + bg workers + _attach elimination)
+Phase S1 (Ratatui + bg workers)
          │
          ├──────────────────────────────────┐
          ▼                                  │
@@ -870,9 +918,10 @@ what is now natively available.
 ├──────────────────────────────┼───────────┼───────────────────────────┼───────────┤
 │ Background workers           │ ❌ unused  │ Move JSON parse to worker │ S1        │
 ├──────────────────────────────┼───────────┼───────────────────────────┼───────────┤
-│ CLI --blocking / pane ID ret │ ❌ unused  │ Get pane_id from new-pane │ S1        │
-├──────────────────────────────┼───────────┼───────────────────────────┼───────────┤
 │ Query session env vars       │ ❌ unused  │ Detect RALLY_WORKSPACE   │ S1        │
+├──────────────────────────────┼───────────┼───────────────────────────┼───────────┤
+│ Event::CwdChanged            │ ❌ unused  │ Primary CWD tracking —   │ S3        │
+│                              │           │ zero-poll, native push   │           │
 ├──────────────────────────────┼───────────┼───────────────────────────┼───────────┤
 │ set_pane_color(id, fg, bg)   │ ❌ unused  │ State-driven pane tinting │ S4        │
 ├──────────────────────────────┼───────────┼───────────────────────────┼───────────┤
@@ -947,17 +996,17 @@ what is now natively available.
    (group related agents) and floating panes (detail overlays). Rally should
    use `open_pane_relative_to_plugin` to spawn agents next to the sidebar.
 
-9. **`_attach` shim could be eliminated.**
-   Zellij 0.44 CLI returns pane IDs from `new-pane --blocking`. The existing
-   `ral-1fm` issue already tracks this — adopting it would remove the `_attach`
-   shim complexity entirely.
+9. **`_attach` shim needs lifecycle redesign.**
+   `new-pane` already returns pane IDs (no `--blocking` needed). However,
+   `_attach` does more than capture pane IDs — it bootstraps runtime context,
+   env, and hooks. Replacing it requires a proper launch-spec design, tracked
+   separately from the sidebar roadmap.
 
 ### 8.3 Adoption priority (mapped to phases)
 
 ```
 S1 — MUST HAVE (rendering foundation):
   ✦ Background workers for CLI calls + JSON parse     ← fixes UI stalls
-  ✦ Eliminate _attach shim via --blocking pane ID     ← simplifies codebase
   ✦ Query env vars at plugin load                     ← dynamic config
 
 S3 — MUST HAVE (reactive push):
@@ -1000,7 +1049,6 @@ Future scope:
     │  │ S1: Rendering Foundation             │                       │
     │  │  • Ratatui via zellij_widgets        │                       │
     │  │  • Background workers                │                       │
-    │  │  • Eliminate _attach shim            │                       │
     │  │  • Query session env vars            │                       │
     │  └──────────┬───────────────────────────┘                       │
     │             │                                                   │
@@ -1030,12 +1078,12 @@ Future scope:
     │             │           │                                       │
     │             ▼           ▼                                       │
     │  ┌─────────────────┐ ┌─────────────────────┐                    │
-    │  │ S5: Floating    │ │ S6: Grouped Views   │                    │
-    │  │  Action Window  │ │  • SidebarProjection│                    │
-    │  │ • rally pane    │ │  • runtime group_by │                    │
-    │  │   menu          │ │  • density modes    │                    │
-    │  │ • restart/stop  │ │  • config.jsonc     │                    │
-    │  │ • focus shortcut│ │    schema (wired)   │                    │
+    │  │ S5: Floating    │ │ S6: Plugin-side     │                    │
+    │  │  Action Window  │ │  Tree Merge         │                    │
+    │  │ • rally pane    │ │  • extract build_   │                    │
+    │  │   menu          │ │    tree() module    │                    │
+    │  │ • restart/stop  │ │  • density modes    │                    │
+    │  │ • focus shortcut│ │  • config.jsonc     │                    │
     │  └─────────────────┘ └──────────┬──────────┘                    │
     │                                 │                               │
     │                                 ▼                               │
@@ -1063,8 +1111,8 @@ User presses Enter on selected sidebar item
     │     ▼ YES
     │   ┌─────────────────────────────────────────┐
     │   │ Plugin spawns floating pane:             │
-    │   │   run_command(["rally", "pane", "menu",  │
-    │   │                pane_id])                  │
+    │   │   open_command_pane_floating(            │
+    │   │     "rally", ["pane", "menu", pane_id])  │
     │   │                                          │
     │   │   ┌────────────────────────────────────┐ │
     │   │   │ rally pane menu (floating TUI)     │ │
@@ -1084,8 +1132,8 @@ User presses Enter on selected sidebar item
           ▼ YES
         ┌─────────────────────────────────────────┐
         │ Plugin spawns floating pane:             │
-        │   run_command(["rally", "pane", "menu",  │
-        │                pane_id])                  │
+        │   open_command_pane_floating(            │
+        │     "rally", ["pane", "menu", pane_id])  │
         │                                          │
         │   ┌────────────────────────────────────┐ │
         │   │ rally pane menu (floating TUI)     │ │
