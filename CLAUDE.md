@@ -116,6 +116,10 @@ Log targets per module: `rally_core`, `rally_store`, `rally_daemon`, `rally_cli`
 Library crates emit tracing events/spans but never install a subscriber — only binary
 entry points (`rallyd`, `rally`) call the init function.
 
+## Code Search
+
+Use the `ast-grep` skill for regex-like AST-driven pattern matching across the codebase. Prefer over `grep` when you need to match code structure, not just text.
+
 ## Conventions & Patterns
 
 - IDs are `Ulid` wrapped in newtypes (`WorkspaceId`, `AgentId`, etc.) — no raw strings across boundaries.

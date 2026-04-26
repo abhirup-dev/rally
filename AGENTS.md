@@ -36,6 +36,10 @@ cp -rf source dest          # NOT: cp -r source dest
 - `apt-get` - use `-y` flag
 - `brew` - use `HOMEBREW_NO_AUTO_UPDATE=1` env var
 
+## Code Search
+
+Use the `ast-grep` skill for regex-like AST-driven pattern matching across the codebase. Prefer over `grep` when you need to match code structure, not just text.
+
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:ca08a54f -->
 ## Beads Issue Tracker
 
