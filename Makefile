@@ -9,7 +9,7 @@
 #   make test          cargo test --workspace
 #   make ci            cargo xtask ci (fmt + clippy + test)
 #   make prod          build CLI + daemon + plugin (no state touch)
-#   make kill           kill any running rallyd
+#   make kill          kill any running rallyd
 # ──────────────────────────────────────────────────────────────────────────────
 
 .PHONY: dev dev-restart dev-plugin dev-daemon dev-clean dev-status \
@@ -24,10 +24,40 @@ WASM_DST     := $(HOME)/.config/rally/rally.wasm
 
 # Exported into daemon AND zellij so the plugin's child `rally` CLI
 # inherits the same socket + data dir.
-export RALLY_DATA_DIR          := $(DEV_STATE)
+export RALLY_DATA_DIR           := $(DEV_STATE)
 export RALLY_DAEMON_SOCKET_PATH := $(DEV_SOCKET)
-export RALLY_LOG               := rally=debug
-export PATH                    := $(CURDIR)/target/debug:$(PATH)
+export RALLY_LOG                := rally=debug
+export PATH                     := $(CURDIR)/target/debug:$(PATH)
+
+# ── Shared: start daemon in background, wait for socket ─────────────────────
+# Retries up to 3s (10 × 0.3s) then prints diagnostics on failure.
+define start-dev-daemon
+	@mkdir -p "$(DEV_STATE)"
+	@echo "→ starting dev daemon (socket=$(DEV_SOCKET))"
+	@./target/debug/rallyd > "$(DEV_STATE)/rallyd.log" 2>&1 & \
+		echo $$! > "$(DEV_STATE)/rallyd.pid"
+	@n=0; while [ $$n -lt 10 ]; do \
+		[ -S "$(DEV_SOCKET)" ] && break; \
+		n=$$((n + 1)); sleep 0.3; \
+	done; \
+	if [ ! -S "$(DEV_SOCKET)" ]; then \
+		PID=$$(cat "$(DEV_STATE)/rallyd.pid" 2>/dev/null); \
+		echo ""; \
+		echo "✗ daemon failed to start after 3s"; \
+		echo "  pid file: $$PID"; \
+		if [ -n "$$PID" ] && kill -0 $$PID 2>/dev/null; then \
+			echo "  process:  still running (socket never appeared)"; \
+		else \
+			echo "  process:  exited"; \
+		fi; \
+		echo "  stderr:"; \
+		cat "$(DEV_STATE)/rallyd.log" 2>/dev/null | tail -10 | sed 's/^/    /'; \
+		echo "  tracing:"; \
+		tail -5 "$$HOME/.local/state/rally/logs/rally-daemon.log.$$(date +%Y-%m-%d)" 2>/dev/null | sed 's/^/    /' || echo "    (no log)"; \
+		exit 1; \
+	fi
+	@echo "→ daemon running (pid $$(cat $(DEV_STATE)/rallyd.pid))"
+endef
 
 # ── Dev targets ──────────────────────────────────────────────────────────────
 
@@ -55,34 +85,16 @@ dev-clean:
 
 # Full dev loop: clean slate, build everything, launch.
 dev: kill dev-clean build dev-plugin
-	@echo "→ starting dev daemon (socket=$(DEV_SOCKET))"
-	@./target/debug/rallyd > "$(DEV_STATE)/rallyd.log" 2>&1 & \
-		echo $$! > "$(DEV_STATE)/rallyd.pid"
-	@sleep 0.3
-	@if [ ! -S "$(DEV_SOCKET)" ]; then \
-		echo "✗ daemon failed to start — check $(DEV_STATE)/rallyd.log"; \
-		cat "$(DEV_STATE)/rallyd.log" | tail -10; \
-		exit 1; \
-	fi
-	@echo "→ daemon running (pid $$(cat $(DEV_STATE)/rallyd.pid))"
+	$(start-dev-daemon)
 	@echo "→ launching zellij"
 	@zellij --new-session-with-layout "$(DEV_LAYOUT)" || true
 	@echo "→ zellij exited, stopping daemon"
 	@kill $$(cat "$(DEV_STATE)/rallyd.pid" 2>/dev/null) 2>/dev/null || true
 	@echo "→ done"
 
-# Rebuild + restart without wiping state. Useful when iterating on code
-# but want to keep any workspaces/agents created during the session.
+# Rebuild + restart without wiping state.
 dev-restart: kill build dev-plugin
-	@mkdir -p "$(DEV_STATE)"
-	@echo "→ restarting dev daemon"
-	@./target/debug/rallyd > "$(DEV_STATE)/rallyd.log" 2>&1 & \
-		echo $$! > "$(DEV_STATE)/rallyd.pid"
-	@sleep 0.3
-	@if [ ! -S "$(DEV_SOCKET)" ]; then \
-		echo "✗ daemon failed to start"; exit 1; \
-	fi
-	@echo "→ daemon running (pid $$(cat $(DEV_STATE)/rallyd.pid))"
+	$(start-dev-daemon)
 	@echo "→ launching zellij"
 	@zellij --new-session-with-layout "$(DEV_LAYOUT)" || true
 	@kill $$(cat "$(DEV_STATE)/rallyd.pid" 2>/dev/null) 2>/dev/null || true
