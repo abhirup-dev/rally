@@ -1,12 +1,9 @@
 use zellij_widgets::prelude::{Modifier, Style};
 
-#[allow(dead_code)]
 pub mod palette {
     use zellij_widgets::prelude::Color;
 
-    pub const BASE: Color = Color::Rgb { r: 25, g: 23, b: 36 };
     pub const SURFACE: Color = Color::Rgb { r: 31, g: 29, b: 46 };
-    pub const OVERLAY: Color = Color::Rgb { r: 38, g: 35, b: 58 };
     pub const TEXT: Color = Color::Rgb { r: 224, g: 222, b: 244 };
     pub const SUBTLE: Color = Color::Rgb { r: 144, g: 140, b: 170 };
     pub const MUTED: Color = Color::Rgb { r: 110, g: 106, b: 134 };

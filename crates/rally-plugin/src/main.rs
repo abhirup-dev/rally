@@ -272,8 +272,7 @@ impl ZellijPlugin for RallyPlugin {
         let rows = rows as u16;
         let cols = cols.min(40) as u16;
 
-        // Update scroll before building lines so build_lines can use self.scroll_offset.
-        self.update_scroll(rows as usize);
+        self.update_scroll(rows as usize, cols as usize);
 
         let lines = self.build_lines(rows as usize, cols as usize);
         let text = Text::from(lines);
@@ -507,8 +506,17 @@ impl RallyPlugin {
     // ── Scroll ────────────────────────────────────────────────────────────
 
     /// Adjust scroll_offset so the selected node stays in the visible tree window.
-    fn update_scroll(&mut self, total_rows: usize) {
-        let chrome = 5usize;
+    fn update_scroll(&mut self, total_rows: usize, cols: usize) {
+        let ctx = RenderCtx {
+            cols,
+            agents: &self.agents,
+            inbox_items: &self.inbox_items,
+            filter: (!self.filter.is_empty()).then_some(self.filter.as_str()),
+            status_message: self.status_message.as_deref(),
+        };
+        let inbox_count = render_inbox_lines(&ctx, self.show_inbox_detail).len();
+        let status_count = render_status_lines(&ctx).len();
+        let chrome = 3 + inbox_count + status_count;
         let tree_rows = total_rows.saturating_sub(chrome).max(1);
 
         if let Some(idx) = self.selected_index() {

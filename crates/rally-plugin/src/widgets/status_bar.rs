@@ -1,6 +1,8 @@
 use crate::theme::palette;
 
-use super::{truncate_chars, RenderCtx};
+use unicode_width::UnicodeWidthStr;
+
+use super::{truncate_display, RenderCtx};
 use zellij_widgets::prelude::*;
 
 pub fn render_status_lines(ctx: &RenderCtx<'_>) -> Vec<Line<'static>> {
@@ -18,7 +20,7 @@ pub fn render_status_lines(ctx: &RenderCtx<'_>) -> Vec<Line<'static>> {
 
     if let Some(message) = ctx.status_message {
         lines.push(Line::from(Span::styled(
-            truncate_chars(message, width),
+            truncate_display(message, width),
             Style::default().fg(palette::GOLD),
         )));
     }
@@ -26,7 +28,7 @@ pub fn render_status_lines(ctx: &RenderCtx<'_>) -> Vec<Line<'static>> {
         lines.push(Line::from(vec![
             Span::styled("/", Style::default().fg(palette::IRIS)),
             Span::styled(
-                truncate_chars(filter, width.saturating_sub(1)),
+                truncate_display(filter, width.saturating_sub(1)),
                 Style::default().fg(palette::TEXT),
             ),
         ]));
@@ -55,13 +57,16 @@ fn merged_footer(total: usize, running: usize, attention: usize, cols: usize) ->
         ));
     }
 
-    let left_width: usize = left_spans.iter().map(|s| s.content.chars().count()).sum();
+    // Display width so glyphs like ● and ◉ are measured correctly.
+    let left_width: usize = left_spans.iter().map(|s| s.content.width()).sum();
     let right = "? help ";
-    let right_width = right.chars().count();
-    let fill = cols.saturating_sub(left_width + right_width);
+    let right_width = right.width();
 
-    left_spans.push(Span::raw(" ".repeat(fill)));
-    left_spans.push(Span::styled(right, Style::default().fg(palette::MUTED)));
+    if left_width + right_width <= cols {
+        let fill = cols - left_width - right_width;
+        left_spans.push(Span::raw(" ".repeat(fill)));
+        left_spans.push(Span::styled(right, Style::default().fg(palette::MUTED)));
+    }
 
     Line::from(left_spans)
 }

@@ -2146,6 +2146,7 @@ dependencies = [
  "insta",
  "serde",
  "serde_json",
+ "unicode-width",
  "zellij-tile",
  "zellij_widgets",
 ]

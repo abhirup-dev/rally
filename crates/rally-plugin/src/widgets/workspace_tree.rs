@@ -3,8 +3,9 @@ use std::collections::HashSet;
 
 use crate::theme::{bare_terminal_theme, palette, state_theme};
 use crate::DensityMode;
+use unicode_width::UnicodeWidthStr;
 
-use super::{truncate_chars, AgentInfo, TreeNode, WorkspaceInfo};
+use super::{truncate_display, AgentInfo, TreeNode, WorkspaceInfo};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use zellij_widgets::prelude::*;
@@ -97,7 +98,7 @@ fn workspace_line(
         ),
         Span::raw(" "),
         Span::styled(
-            truncate_chars(&name, max_name),
+            truncate_display(&name, max_name),
             Style::default()
                 .fg(palette::TEXT)
                 .add_modifier(Modifier::BOLD),
@@ -140,7 +141,7 @@ fn agent_line(
 
     let prefix_len = 5usize;
     let max_role = cols
-        .saturating_sub(prefix_len + suffix.chars().count())
+        .saturating_sub(prefix_len + suffix.width())
         .max(1);
 
     let spans = vec![
@@ -151,7 +152,7 @@ fn agent_line(
         Span::styled(glyph, glyph_style),
         Span::raw(" "),
         Span::styled(
-            truncate_chars(&agent.role, max_role),
+            truncate_display(&agent.role, max_role),
             Style::default().fg(palette::TEXT),
         ),
         Span::styled(suffix, Style::default().fg(palette::SUBTLE)),
@@ -172,7 +173,7 @@ fn tab_line(name: &str, is_collapsed: bool, cols: usize, selected: bool) -> Line
         ),
         Span::raw(" "),
         Span::styled(
-            truncate_chars(name, max_name),
+            truncate_display(name, max_name),
             Style::default()
                 .fg(palette::TEXT)
                 .add_modifier(Modifier::BOLD),
@@ -194,7 +195,7 @@ fn pane_line(
 
     let prefix_len = 5usize;
     let max_label = cols
-        .saturating_sub(prefix_len + suffix.chars().count())
+        .saturating_sub(prefix_len + suffix.width())
         .max(1);
 
     let spans = vec![
@@ -205,7 +206,7 @@ fn pane_line(
         Span::styled(theme.glyph, theme.style),
         Span::raw(" "),
         Span::styled(
-            truncate_chars(label, max_label),
+            truncate_display(label, max_label),
             Style::default().fg(palette::TEXT),
         ),
         Span::styled(suffix, Style::default().fg(palette::SUBTLE)),
@@ -219,7 +220,8 @@ fn styled_line(spans: Vec<Span<'static>>, selected: bool, cols: usize) -> Line<'
         return Line::from(spans);
     }
     let sel_bg = palette::SURFACE;
-    let content_width: usize = spans.iter().map(|s| s.content.chars().count()).sum();
+    // Display width (not char count) so wide Unicode / CJK pads correctly.
+    let content_width: usize = spans.iter().map(|s| s.width()).sum();
     let pad = cols.saturating_sub(content_width);
 
     let mut styled: Vec<Span<'static>> = spans
@@ -394,8 +396,8 @@ mod tests {
 
     #[test]
     fn truncates_on_char_boundaries() {
-        use super::super::truncate_chars;
-        assert_eq!(truncate_chars("abcd", 3), "ab…");
-        assert_eq!(truncate_chars("⚠abcd", 3), "⚠a…");
+        use super::super::truncate_display;
+        assert_eq!(truncate_display("abcd", 3), "ab…");
+        assert_eq!(truncate_display("⚠abcd", 3), "⚠a…");
     }
 }

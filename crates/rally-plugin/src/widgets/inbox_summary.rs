@@ -1,6 +1,6 @@
 use crate::theme::palette;
 
-use super::{truncate_chars, AgentInfo, InboxItemInfo, RenderCtx};
+use super::{truncate_display, AgentInfo, InboxItemInfo, RenderCtx};
 use zellij_widgets::prelude::*;
 
 pub fn render_inbox_lines(ctx: &RenderCtx<'_>, expanded: bool) -> Vec<Line<'static>> {
@@ -104,12 +104,12 @@ fn render_detail(ctx: &RenderCtx<'_>, lines: &mut Vec<Line<'static>>) {
                 Span::styled(icon, Style::default().fg(icon_color)),
                 Span::raw(" "),
                 Span::styled(
-                    format!("{:<8}", truncate_chars(label, 8)),
+                    format!("{:<8}", truncate_display(label, 8)),
                     Style::default().fg(palette::SUBTLE),
                 ),
                 Span::raw(" "),
                 Span::styled(
-                    truncate_chars(message, ctx.cols.saturating_sub(15).max(1)),
+                    truncate_display(message, ctx.cols.saturating_sub(15).max(1)),
                     Style::default().fg(palette::TEXT),
                 ),
             ]));
@@ -133,12 +133,12 @@ fn render_detail(ctx: &RenderCtx<'_>, lines: &mut Vec<Line<'static>>) {
             Span::styled(icon, Style::default().fg(icon_color)),
             Span::raw(" "),
             Span::styled(
-                format!("{:<8}", truncate_chars(&agent.role, 8)),
+                format!("{:<8}", truncate_display(&agent.role, 8)),
                 Style::default().fg(palette::SUBTLE),
             ),
             Span::raw(" "),
             Span::styled(
-                truncate_chars(&agent.state, ctx.cols.saturating_sub(15).max(1)),
+                truncate_display(&agent.state, ctx.cols.saturating_sub(15).max(1)),
                 Style::default().fg(palette::TEXT),
             ),
         ]));
