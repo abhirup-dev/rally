@@ -270,7 +270,7 @@ impl ZellijPlugin for RallyPlugin {
 
     fn render(&mut self, rows: usize, cols: usize) {
         let rows = rows as u16;
-        let cols = cols.min(40) as u16;
+        let cols = cols as u16;
 
         self.update_scroll(rows as usize, cols as usize);
 
