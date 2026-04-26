@@ -2,25 +2,28 @@
 # ──────────────────────────────────────────────────────────────────────────────
 #   make dev           wipe dev DB, build everything, start daemon + zellij
 #   make dev-restart   rebuild plugin + CLI, restart daemon, relaunch zellij
-#   make dev-plugin    rebuild wasm only, install — hot-reload via skip_plugin_cache
+#   make dev-plugin    rebuild wasm only (zellij hot-reloads via skip_plugin_cache)
 #   make dev-daemon    start dev daemon in foreground (for daemon iteration)
 #   make dev-clean     wipe dev state
 #   make dev-status    show running dev daemon, socket, DB size
 #   make test          cargo test --workspace
 #   make ci            cargo xtask ci (fmt + clippy + test)
 #   make prod          build CLI + daemon + plugin (no state touch)
-#   make kill          kill any running rallyd
+#   make kill          kill THIS worktree's dev daemon only
 # ──────────────────────────────────────────────────────────────────────────────
 
 .PHONY: dev dev-restart dev-plugin dev-daemon dev-clean dev-status \
+        dev-layout dev-permissions \
         test ci prod build kill help
 
 # ── Paths ────────────────────────────────────────────────────────────────────
-DEV_STATE    := $(CURDIR)/target/dev-state
-DEV_SOCKET   := $(DEV_STATE)/rally.sock
-DEV_LAYOUT   := layouts/sidebar-dev.kdl
-WASM_SRC     := target/wasm32-wasip1/release/rally-plugin.wasm
-WASM_DST     := $(HOME)/.config/rally/rally.wasm
+# Everything under target/ — per-worktree, gitignored, no cross-worktree collisions.
+DEV_STATE     := $(CURDIR)/target/dev-state
+DEV_SOCKET    := $(DEV_STATE)/rally.sock
+DEV_LAYOUT    := $(DEV_STATE)/sidebar-dev.kdl
+WASM_TARGET   := wasm32-wasip1
+WASM_ABS      := $(CURDIR)/target/$(WASM_TARGET)/release/rally-plugin.wasm
+PERMS_CACHE   := $(HOME)/Library/Caches/org.Zellij-Contributors.Zellij/permissions.kdl
 
 # Exported into daemon AND zellij so the plugin's child `rally` CLI
 # inherits the same socket + data dir.
@@ -30,7 +33,6 @@ export RALLY_LOG                := rally=debug
 export PATH                     := $(CURDIR)/target/debug:$(PATH)
 
 # ── Shared: start daemon in background, wait for socket ─────────────────────
-# Retries up to 3s (10 × 0.3s) then prints diagnostics on failure.
 define start-dev-daemon
 	@mkdir -p "$(DEV_STATE)"
 	@echo "→ starting dev daemon (socket=$(DEV_SOCKET))"
@@ -76,15 +78,39 @@ help:
 	@echo ""
 	@echo "Other:"
 	@echo "  make prod          release build (no state touch)"
-	@echo "  make kill          kill any running rallyd"
+	@echo "  make kill          kill this worktree's dev daemon"
 
 dev-clean:
 	@echo "→ wiping dev state at $(DEV_STATE)"
 	rm -rf "$(DEV_STATE)"
 	mkdir -p "$(DEV_STATE)"
 
+# Generate a dev layout that points at this worktree's wasm build artifact.
+dev-layout:
+	@mkdir -p "$(DEV_STATE)"
+	@printf 'layout {\n\
+	    pane split_direction="vertical" {\n\
+	        pane name="main" size="75%%"\n\
+	        pane name="rally-sidebar" size="25%%" {\n\
+	            plugin location="file:$(WASM_ABS)" {\n\
+	                skip_plugin_cache true\n\
+	                _allow_exec_host_cmd true\n\
+	            }\n\
+	        }\n\
+	    }\n\
+	}\n' > "$(DEV_LAYOUT)"
+	@echo "→ layout generated at $(DEV_LAYOUT)"
+
+# Ensure the permissions cache grants this worktree's wasm the needed permissions.
+dev-permissions:
+	@if ! grep -qF "$(WASM_ABS)" "$(PERMS_CACHE)" 2>/dev/null; then \
+		mkdir -p "$$(dirname $(PERMS_CACHE))"; \
+		printf '"$(WASM_ABS)" {\n    RunCommands\n    ReadApplicationState\n    ChangeApplicationState\n}\n' >> "$(PERMS_CACHE)"; \
+		echo "→ permissions added for $(WASM_ABS)"; \
+	fi
+
 # Full dev loop: clean slate, build everything, launch.
-dev: kill dev-clean build dev-plugin
+dev: kill dev-clean build dev-plugin dev-layout dev-permissions
 	$(start-dev-daemon)
 	@echo "→ launching zellij"
 	@zellij --new-session-with-layout "$(DEV_LAYOUT)" || true
@@ -93,7 +119,7 @@ dev: kill dev-clean build dev-plugin
 	@echo "→ done"
 
 # Rebuild + restart without wiping state.
-dev-restart: kill build dev-plugin
+dev-restart: kill build dev-plugin dev-layout dev-permissions
 	$(start-dev-daemon)
 	@echo "→ launching zellij"
 	@zellij --new-session-with-layout "$(DEV_LAYOUT)" || true
@@ -103,10 +129,8 @@ dev-restart: kill build dev-plugin
 # Just the wasm — useful when only plugin code changed. Zellij picks up the
 # new .wasm on next pane open because the layout has skip_plugin_cache true.
 dev-plugin:
-	cargo build -p rally-plugin --target wasm32-wasip1 --release
-	@mkdir -p "$$(dirname $(WASM_DST))"
-	cp "$(WASM_SRC)" "$(WASM_DST)"
-	@echo "→ plugin installed at $(WASM_DST)"
+	cargo build -p rally-plugin --target $(WASM_TARGET) --release
+	@echo "→ plugin built at $(WASM_ABS)"
 
 # Foreground daemon (no zellij). Ctrl-C to stop.
 dev-daemon: kill build dev-clean
@@ -122,10 +146,10 @@ dev-status:
 		echo "  daemon: not running"; \
 	fi
 	@ls -la "$(DEV_SOCKET)" 2>/dev/null || echo "  socket: not found"
-	@echo ""
-	@echo "Prod:"
-	@pgrep -fl rallyd 2>/dev/null | grep -v "target/dev-state" || echo "  no prod daemon running"
-	@ls -lh "$$HOME/.local/share/rally/state.db" 2>/dev/null || echo "  no prod DB"
+	@echo "  wasm:   $(WASM_ABS)"
+	@ls -lh "$(WASM_ABS)" 2>/dev/null || echo "          (not built)"
+	@echo "  layout: $(DEV_LAYOUT)"
+	@ls -lh "$(DEV_LAYOUT)" 2>/dev/null || echo "          (not generated)"
 
 # ── Build ────────────────────────────────────────────────────────────────────
 
@@ -144,17 +168,17 @@ ci:
 
 prod:
 	cargo build --release
-	cargo build -p rally-plugin --target wasm32-wasip1 --release
-	@mkdir -p "$$(dirname $(WASM_DST))"
-	cp "$(WASM_SRC)" "$(WASM_DST)"
+	cargo build -p rally-plugin --target $(WASM_TARGET) --release
 
 # ── Utilities ────────────────────────────────────────────────────────────────
 
+# Kill only THIS worktree's dev daemon (by pid file). Never pkill globally.
 kill:
 	@if [ -f "$(DEV_STATE)/rallyd.pid" ]; then \
-		kill $$(cat "$(DEV_STATE)/rallyd.pid") 2>/dev/null && \
-			echo "→ killed dev daemon (pid $$(cat $(DEV_STATE)/rallyd.pid))" || true; \
+		PID=$$(cat "$(DEV_STATE)/rallyd.pid"); \
+		if kill -0 $$PID 2>/dev/null; then \
+			kill $$PID && echo "→ killed dev daemon (pid $$PID)"; \
+		fi; \
 		rm -f "$(DEV_STATE)/rallyd.pid"; \
 	fi
-	@pkill -f 'rallyd' 2>/dev/null && echo "→ killed other rallyd processes" || true
 	@rm -f "$(DEV_SOCKET)"

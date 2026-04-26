@@ -66,17 +66,18 @@ cargo test --workspace
 cargo clippy --all-targets -- -D warnings
 ```
 
-### Dev / Prod DB separation
+### Dev / Prod isolation
 
-Dev and prod use separate DB + socket paths to avoid stale test data colliding:
+Everything dev-related lives under `target/` — per-worktree, gitignored, no cross-worktree collisions:
 
-| | DB dir | Socket |
-|---|---|---|
-| **Dev** (`make dev`) | `target/dev-state/` | `target/dev-state/rally.sock` |
-| **Prod** (default) | `~/.local/share/rally/` | `/tmp/rally/rally.sock` |
+| | DB | Socket | Wasm | Layout |
+|---|---|---|---|---|
+| **Dev** | `target/dev-state/` | `target/dev-state/rally.sock` | `target/.../rally-plugin.wasm` | `target/dev-state/sidebar-dev.kdl` |
+| **Prod** | `~/.local/share/rally/` | `/tmp/rally/rally.sock` | N/A | `layouts/sidebar-dev.kdl` |
 
-Controlled by env vars `RALLY_DATA_DIR` and `RALLY_DAEMON_SOCKET_PATH`. The Makefile
-`export`s both so the daemon, CLI, and plugin all agree on paths.
+`make dev-layout` generates a KDL layout with the absolute wasm path for this worktree.
+`make dev-permissions` ensures the Zellij permissions cache includes this worktree's wasm.
+`make kill` only kills this worktree's daemon (via pid file), never touches other worktrees.
 
 ### Plugin build notes
 
@@ -84,18 +85,9 @@ Controlled by env vars `RALLY_DATA_DIR` and `RALLY_DAEMON_SOCKET_PATH`. The Make
 - It is excluded from `default-members` — never builds with `cargo build --workspace`.
 - Zellij aggressively caches plugin wasm. The dev layout uses `skip_plugin_cache true` to always load fresh.
 - Artifact path: `target/wasm32-wasip1/release/rally-plugin.wasm` (hyphen, not underscore).
-- **Permissions**: The plugin needs `RunCommands` + `ReadApplicationState` + `ChangeApplicationState`. Pre-grant via:
-  ```bash
-  # macOS cache path:
-  cat > ~/Library/Caches/org.Zellij-Contributors.Zellij/permissions.kdl <<'KDL'
-  "/Users/abhirupdas/.config/rally/rally.wasm" {
-      RunCommands
-      ReadApplicationState
-      ChangeApplicationState
-  }
-  KDL
-  ```
-  Without this, `request_permission()` shows a dialog that blocks plugin rendering in narrow panes.
+- **Permissions**: The plugin needs `RunCommands` + `ReadApplicationState` + `ChangeApplicationState`.
+  `make dev-permissions` handles this automatically. For manual setup, append to `~/Library/Caches/org.Zellij-Contributors.Zellij/permissions.kdl`.
+  Without pre-granted permissions, `request_permission()` shows a dialog that blocks plugin rendering in narrow panes.
 
 ## Architecture Overview
 
