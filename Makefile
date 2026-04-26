@@ -25,6 +25,12 @@ WASM_TARGET   := wasm32-wasip1
 WASM_ABS      := $(CURDIR)/target/$(WASM_TARGET)/release/rally-plugin.wasm
 PERMS_CACHE   := $(HOME)/Library/Caches/org.Zellij-Contributors.Zellij/permissions.kdl
 
+# Share compiled dependency artifacts across worktrees via sccache.
+# Falls back silently if sccache is not installed.
+ifneq (,$(shell command -v sccache 2>/dev/null))
+  export RUSTC_WRAPPER := sccache
+endif
+
 # Exported into daemon AND zellij so the plugin's child `rally` CLI
 # inherits the same socket + data dir.
 export RALLY_DATA_DIR           := $(DEV_STATE)
