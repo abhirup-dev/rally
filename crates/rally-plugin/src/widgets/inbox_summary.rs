@@ -1,3 +1,5 @@
+use crate::theme::palette;
+
 use super::{truncate_chars, AgentInfo, InboxItemInfo, RenderCtx};
 use zellij_widgets::prelude::*;
 
@@ -10,23 +12,32 @@ pub fn render_inbox_lines(ctx: &RenderCtx<'_>, expanded: bool) -> Vec<Line<'stat
     let mut lines = Vec::new();
 
     let mut header_spans = vec![Span::styled(
-        "Inbox",
-        Style::default().add_modifier(Modifier::BOLD),
+        " Inbox",
+        Style::default()
+            .fg(palette::TEXT)
+            .add_modifier(Modifier::BOLD),
     )];
-    header_spans.push(Span::raw(urgency_badge("high", signals.high)));
-    header_spans.push(Span::raw(urgency_badge("medium", signals.medium)));
+    if signals.high > 0 {
+        header_spans.push(Span::styled(
+            format!("  ●{}", signals.high),
+            Style::default().fg(palette::LOVE),
+        ));
+    }
+    if signals.medium > 0 {
+        header_spans.push(Span::styled(
+            format!("  ◐{}", signals.medium),
+            Style::default().fg(palette::GOLD),
+        ));
+    }
     lines.push(Line::from(header_spans));
 
     if expanded {
         render_detail(ctx, &mut lines);
     } else {
-        lines.push(Line::from(vec![
-            Span::raw(format!("  {} open · ", signals.total)),
-            Span::styled(
-                "press i for detail",
-                Style::default().add_modifier(Modifier::DIM),
-            ),
-        ]));
+        lines.push(Line::from(Span::styled(
+            format!("   {} open", signals.total),
+            Style::default().fg(palette::SUBTLE),
+        )));
     }
 
     lines
@@ -87,12 +98,21 @@ fn render_detail(ctx: &RenderCtx<'_>, lines: &mut Vec<Line<'static>>) {
                 .and_then(|id| ctx.agents.iter().find(|a| a.id == id));
             let label = agent.map(|a| a.role.as_str()).unwrap_or("system");
             let message = item.message.as_deref().unwrap_or("attention required");
-            lines.push(Line::from(format!(
-                "  {} {:<8} {}",
-                urgency_icon(&item.urgency),
-                truncate_chars(label, 8),
-                truncate_chars(message, ctx.cols.saturating_sub(13).max(1))
-            )));
+            let (icon, icon_color) = urgency_icon(&item.urgency);
+            lines.push(Line::from(vec![
+                Span::raw("   "),
+                Span::styled(icon, Style::default().fg(icon_color)),
+                Span::raw(" "),
+                Span::styled(
+                    format!("{:<8}", truncate_chars(label, 8)),
+                    Style::default().fg(palette::SUBTLE),
+                ),
+                Span::raw(" "),
+                Span::styled(
+                    truncate_chars(message, ctx.cols.saturating_sub(15).max(1)),
+                    Style::default().fg(palette::TEXT),
+                ),
+            ]));
         }
         return;
     }
@@ -103,33 +123,33 @@ fn render_detail(ctx: &RenderCtx<'_>, lines: &mut Vec<Line<'static>>) {
         .filter(|a| a.state == "attention_required" || a.state == "waiting_for_input")
         .take(5)
     {
-        let icon = if agent.state == "attention_required" {
-            "◉"
+        let (icon, icon_color) = if agent.state == "attention_required" {
+            ("●", palette::LOVE)
         } else {
-            "⚠"
+            ("◐", palette::GOLD)
         };
-        lines.push(Line::from(format!(
-            "  {} {:<8} {}",
-            icon,
-            truncate_chars(&agent.role, 8),
-            truncate_chars(&agent.state, ctx.cols.saturating_sub(13).max(1))
-        )));
+        lines.push(Line::from(vec![
+            Span::raw("   "),
+            Span::styled(icon, Style::default().fg(icon_color)),
+            Span::raw(" "),
+            Span::styled(
+                format!("{:<8}", truncate_chars(&agent.role, 8)),
+                Style::default().fg(palette::SUBTLE),
+            ),
+            Span::raw(" "),
+            Span::styled(
+                truncate_chars(&agent.state, ctx.cols.saturating_sub(15).max(1)),
+                Style::default().fg(palette::TEXT),
+            ),
+        ]));
     }
 }
 
-fn urgency_badge(kind: &str, count: usize) -> String {
-    if count == 0 {
-        String::new()
-    } else {
-        format!(" {kind}:{count}")
-    }
-}
-
-fn urgency_icon(urgency: &str) -> &'static str {
+fn urgency_icon(urgency: &str) -> (&'static str, Color) {
     match urgency.to_ascii_lowercase().as_str() {
-        "high" => "◉",
-        "medium" => "⚠",
-        _ => "·",
+        "high" => ("●", palette::LOVE),
+        "medium" => ("◐", palette::GOLD),
+        _ => ("·", palette::SUBTLE),
     }
 }
 
@@ -193,7 +213,7 @@ mod tests {
         let text = lines_text(&lines);
 
         assert!(text.contains("Inbox"));
-        assert!(text.contains("high:1"));
+        assert!(text.contains("●1"));
         assert!(text.contains("1 open"));
     }
 
@@ -230,7 +250,7 @@ mod tests {
         let lines = render_inbox_lines(&ctx, true);
         let text = lines_text(&lines);
 
-        assert!(text.contains("medium:1"));
+        assert!(text.contains("◐1"));
         assert!(text.contains("impl"));
     }
 }

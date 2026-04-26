@@ -1,3 +1,5 @@
+use crate::theme::palette;
+
 use super::{truncate_chars, RenderCtx};
 use zellij_widgets::prelude::*;
 
@@ -12,48 +14,56 @@ pub fn render_status_lines(ctx: &RenderCtx<'_>) -> Vec<Line<'static>> {
         .count();
 
     let mut lines = Vec::new();
-    lines.push(Line::from("─".repeat(width)));
+    lines.push(Line::from(""));
 
     if let Some(message) = ctx.status_message {
         lines.push(Line::from(Span::styled(
             truncate_chars(message, width),
-            Style::default().fg(Color::Yellow),
+            Style::default().fg(palette::GOLD),
         )));
     }
     if let Some(filter) = ctx.filter {
-        lines.push(Line::from(format!(
-            "/{}",
-            truncate_chars(filter, width.saturating_sub(1))
-        )));
+        lines.push(Line::from(vec![
+            Span::styled("/", Style::default().fg(palette::IRIS)),
+            Span::styled(
+                truncate_chars(filter, width.saturating_sub(1)),
+                Style::default().fg(palette::TEXT),
+            ),
+        ]));
     }
 
-    lines.push(summary_line(total, running, attention));
-    lines.push(Line::from(Span::styled(
-        truncate_chars(
-            "[j/k]move [h/l]collapse [f]ocus [a]ck [s]pawn [/]filter [?]help",
-            width,
-        ),
-        Style::default().add_modifier(Modifier::DIM),
-    )));
+    lines.push(merged_footer(total, running, attention, width));
 
     lines
 }
 
-fn summary_line(total: usize, running: usize, attention: usize) -> Line<'static> {
-    let mut spans = vec![Span::raw(format!("{total} agents"))];
+fn merged_footer(total: usize, running: usize, attention: usize, cols: usize) -> Line<'static> {
+    let mut left_spans = vec![Span::styled(
+        format!(" {total} agents"),
+        Style::default().fg(palette::SUBTLE),
+    )];
     if running > 0 {
-        spans.push(Span::styled(
+        left_spans.push(Span::styled(
             format!(" {running}●"),
-            Style::default().fg(Color::Green),
+            Style::default().fg(palette::PINE),
         ));
     }
     if attention > 0 {
-        spans.push(Span::styled(
-            format!(" {attention}⚠"),
-            Style::default().fg(Color::Yellow),
+        left_spans.push(Span::styled(
+            format!(" {attention}◉"),
+            Style::default().fg(palette::GOLD),
         ));
     }
-    Line::from(spans)
+
+    let left_width: usize = left_spans.iter().map(|s| s.content.chars().count()).sum();
+    let right = "? help ";
+    let right_width = right.chars().count();
+    let fill = cols.saturating_sub(left_width + right_width);
+
+    left_spans.push(Span::raw(" ".repeat(fill)));
+    left_spans.push(Span::styled(right, Style::default().fg(palette::MUTED)));
+
+    Line::from(left_spans)
 }
 
 #[cfg(test)]
@@ -90,14 +100,14 @@ mod tests {
     }
 
     #[test]
-    fn renders_summary_counts_and_hints() {
+    fn renders_summary_counts_and_hint() {
         let agents = vec![
             agent("running"),
             agent("waiting_for_input"),
             agent("completed"),
         ];
         let ctx = RenderCtx {
-            cols: 80,
+            cols: 40,
             agents: &agents,
             inbox_items: &[],
             filter: None,
@@ -109,7 +119,7 @@ mod tests {
 
         assert!(text.contains("3 agents"));
         assert!(text.contains("1●"));
-        assert!(text.contains("1⚠"));
-        assert!(text.contains("[j/k]move"));
+        assert!(text.contains("1◉"));
+        assert!(text.contains("? help"));
     }
 }
