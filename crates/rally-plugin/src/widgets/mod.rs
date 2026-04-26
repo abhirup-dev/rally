@@ -71,12 +71,26 @@ pub struct InboxItemInfo {
     pub message: Option<String>,
 }
 
-pub fn truncate_chars(value: &str, max: usize) -> String {
-    if value.chars().count() <= max {
+/// Truncate `value` to fit within `max` terminal columns (display width, not char count).
+/// Uses unicode-width so CJK and wide glyphs are measured correctly.
+pub fn truncate_display(value: &str, max: usize) -> String {
+    use unicode_width::UnicodeWidthChar;
+
+    let total: usize = value.chars().filter_map(|c| c.width()).sum();
+    if total <= max {
         return value.to_string();
     }
-    let keep = max.saturating_sub(1);
-    let mut truncated: String = value.chars().take(keep).collect();
+    let budget = max.saturating_sub(1); // reserve 1 col for '…'
+    let mut width = 0;
+    let mut truncated = String::new();
+    for c in value.chars() {
+        let cw = c.width().unwrap_or(0);
+        if width + cw > budget {
+            break;
+        }
+        width += cw;
+        truncated.push(c);
+    }
     truncated.push('…');
     truncated
 }

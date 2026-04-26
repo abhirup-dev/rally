@@ -319,7 +319,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                             let _ = client
                                 .call(Request::BindPane {
                                     agent_id,
-                                    session_name: session_name.into(),
+                                    session_name,
                                     tab_index: 0,
                                     pane_id,
                                 })

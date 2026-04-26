@@ -49,10 +49,10 @@ fn menu_loop(stdout: &mut io::Stdout, cwd_str: &str) -> anyhow::Result<Option<us
                 KeyCode::Up | KeyCode::Char('k') => {
                     selected = selected.saturating_sub(1);
                 }
-                KeyCode::Down | KeyCode::Char('j') => {
-                    if selected + 1 < ACTIONS.len() {
-                        selected += 1;
-                    }
+                KeyCode::Down | KeyCode::Char('j')
+                    if selected + 1 < ACTIONS.len() =>
+                {
+                    selected += 1;
                 }
                 KeyCode::Enter => return Ok(Some(selected)),
                 KeyCode::Esc | KeyCode::Char('q') => return Ok(None),

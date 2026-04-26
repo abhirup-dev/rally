@@ -1,18 +1,16 @@
 use std::borrow::Cow;
 use std::collections::HashSet;
 
-use crate::theme::{bare_terminal_theme, state_theme};
+use crate::theme::{bare_terminal_theme, palette, state_theme};
 use crate::DensityMode;
+use unicode_width::UnicodeWidthStr;
 
-use super::{truncate_chars, AgentInfo, TreeNode, WorkspaceInfo};
+use super::{truncate_display, AgentInfo, TreeNode, WorkspaceInfo};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use zellij_widgets::prelude::*;
 
-/// Render the visible tree nodes as styled lines with tree connectors.
-///
-/// `visible_nodes` is already collapsed/filter-aware — callers build it via
-/// `visible_tree_nodes()`. `selected` is the currently focused node (for REVERSED highlight).
+#[allow(clippy::too_many_arguments)]
 pub fn render_tree_lines(
     workspaces: &[WorkspaceInfo],
     agents: &[AgentInfo],
@@ -27,7 +25,6 @@ pub fn render_tree_lines(
 
     for (i, node) in visible_nodes.iter().enumerate() {
         let is_selected = selected == Some(node);
-        // A child node is "last" if the next node is a parent-level node or end-of-list.
         let next_is_parent_or_end = matches!(
             visible_nodes.get(i + 1),
             None | Some(TreeNode::Workspace { .. }) | Some(TreeNode::Tab { .. })
@@ -42,9 +39,9 @@ pub fn render_tree_lines(
             }
             TreeNode::Pane { id, .. } => {
                 let connector = if next_is_parent_or_end {
-                    "└──"
+                    "└"
                 } else {
-                    "├──"
+                    "├"
                 };
                 let cwd = pane_cwds.get(id).and_then(|p| {
                     p.file_name()
@@ -55,9 +52,9 @@ pub fn render_tree_lines(
             }
             TreeNode::Agent { id, .. } => {
                 let connector = if next_is_parent_or_end {
-                    "└──"
+                    "└"
                 } else {
-                    "├──"
+                    "├"
                 };
                 agent_line(id, agents, connector, density, cols, is_selected)
             }
@@ -83,12 +80,12 @@ fn workspace_line(
         .unwrap_or_else(|| ws_id.to_string());
 
     let has_agents = agents.iter().any(|a| a.workspace_id == ws_id);
-    let glyph: &'static str = if !has_agents {
-        "◆"
+    let (glyph, glyph_color): (&'static str, Color) = if !has_agents {
+        ("◇", palette::MUTED)
     } else if collapsed.contains(ws_id) {
-        "▶"
+        ("▸", palette::IRIS)
     } else {
-        "▼"
+        ("▾", palette::IRIS)
     };
 
     let max_name = cols.saturating_sub(3).max(1);
@@ -96,23 +93,25 @@ fn workspace_line(
         Span::styled(
             glyph,
             Style::default()
-                .fg(Color::Blue)
+                .fg(glyph_color)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::raw(" "),
         Span::styled(
-            truncate_chars(&name, max_name),
-            Style::default().add_modifier(Modifier::BOLD),
+            truncate_display(&name, max_name),
+            Style::default()
+                .fg(palette::TEXT)
+                .add_modifier(Modifier::BOLD),
         ),
     ];
 
-    styled_line(spans, selected)
+    styled_line(spans, selected, cols)
 }
 
 fn agent_line(
     agent_id: &str,
     agents: &[AgentInfo],
-    connector: &'static str,
+    connector: &str,
     density: DensityMode,
     cols: usize,
     selected: bool,
@@ -120,7 +119,7 @@ fn agent_line(
     let Some(agent) = agents.iter().find(|a| a.id == agent_id) else {
         return Line::from(Span::styled(
             format!(" {connector} (unknown)"),
-            Style::default().add_modifier(Modifier::DIM),
+            Style::default().fg(palette::MUTED),
         ));
     };
 
@@ -140,45 +139,53 @@ fn agent_line(
         }
     };
 
-    let prefix_len = 7usize;
+    let prefix_len = 5usize;
     let max_role = cols
-        .saturating_sub(prefix_len + suffix.chars().count())
+        .saturating_sub(prefix_len + suffix.width())
         .max(1);
 
     let spans = vec![
-        Span::raw(format!(" {connector} ")),
+        Span::styled(
+            format!(" {connector} "),
+            Style::default().fg(palette::MUTED),
+        ),
         Span::styled(glyph, glyph_style),
         Span::raw(" "),
-        Span::raw(truncate_chars(&agent.role, max_role)),
-        Span::styled(suffix, Style::default().add_modifier(Modifier::DIM)),
+        Span::styled(
+            truncate_display(&agent.role, max_role),
+            Style::default().fg(palette::TEXT),
+        ),
+        Span::styled(suffix, Style::default().fg(palette::SUBTLE)),
     ];
 
-    styled_line(spans, selected)
+    styled_line(spans, selected, cols)
 }
 
 fn tab_line(name: &str, is_collapsed: bool, cols: usize, selected: bool) -> Line<'static> {
-    let glyph = if is_collapsed { "▶" } else { "▼" };
+    let glyph = if is_collapsed { "▸" } else { "▾" };
     let max_name = cols.saturating_sub(3).max(1);
     let spans = vec![
         Span::styled(
             glyph,
             Style::default()
-                .fg(Color::Cyan)
+                .fg(palette::FOAM)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::raw(" "),
         Span::styled(
-            truncate_chars(name, max_name),
-            Style::default().add_modifier(Modifier::BOLD),
+            truncate_display(name, max_name),
+            Style::default()
+                .fg(palette::TEXT)
+                .add_modifier(Modifier::BOLD),
         ),
     ];
-    styled_line(spans, selected)
+    styled_line(spans, selected, cols)
 }
 
 fn pane_line(
     pane_id: u32,
     cwd_name: Option<&str>,
-    connector: &'static str,
+    connector: &str,
     cols: usize,
     selected: bool,
 ) -> Line<'static> {
@@ -186,38 +193,55 @@ fn pane_line(
     let label = cwd_name.unwrap_or("terminal");
     let suffix = format!(" p:{pane_id}");
 
-    let prefix_len = 7usize;
+    let prefix_len = 5usize;
     let max_label = cols
-        .saturating_sub(prefix_len + suffix.chars().count())
+        .saturating_sub(prefix_len + suffix.width())
         .max(1);
 
     let spans = vec![
-        Span::raw(format!(" {connector} ")),
+        Span::styled(
+            format!(" {connector} "),
+            Style::default().fg(palette::MUTED),
+        ),
         Span::styled(theme.glyph, theme.style),
         Span::raw(" "),
-        Span::raw(truncate_chars(label, max_label)),
-        Span::styled(suffix, Style::default().add_modifier(Modifier::DIM)),
+        Span::styled(
+            truncate_display(label, max_label),
+            Style::default().fg(palette::TEXT),
+        ),
+        Span::styled(suffix, Style::default().fg(palette::SUBTLE)),
     ];
 
-    styled_line(spans, selected)
+    styled_line(spans, selected, cols)
 }
 
-/// Apply REVERSED modifier to every span for the selected line highlight.
-fn styled_line(spans: Vec<Span<'static>>, selected: bool) -> Line<'static> {
+fn styled_line(spans: Vec<Span<'static>>, selected: bool, cols: usize) -> Line<'static> {
     if !selected {
         return Line::from(spans);
     }
-    Line::from(
-        spans
-            .into_iter()
-            .map(|s| {
-                Span::styled(
-                    Cow::<'static, str>::Owned(s.content.into_owned()),
-                    s.style.add_modifier(Modifier::REVERSED),
-                )
-            })
-            .collect::<Vec<_>>(),
-    )
+    let sel_bg = palette::SURFACE;
+    // Display width (not char count) so wide Unicode / CJK pads correctly.
+    let content_width: usize = spans.iter().map(|s| s.width()).sum();
+    let pad = cols.saturating_sub(content_width);
+
+    let mut styled: Vec<Span<'static>> = spans
+        .into_iter()
+        .map(|s| {
+            Span::styled(
+                Cow::<'static, str>::Owned(s.content.into_owned()),
+                s.style.bg(sel_bg),
+            )
+        })
+        .collect();
+
+    if pad > 0 {
+        styled.push(Span::styled(
+            " ".repeat(pad),
+            Style::default().bg(sel_bg),
+        ));
+    }
+
+    Line::from(styled)
 }
 
 #[cfg(test)]
@@ -294,12 +318,12 @@ mod tests {
         let lines = render_tree_lines(&workspaces, &agents, &collapsed, &visible_nodes, None, &BTreeMap::new(), DensityMode::Normal, 40);
         let text = lines_text(&lines);
 
-        assert!(text.contains("▼ api"), "expanded workspace glyph");
-        assert!(text.contains("├──"), "non-last connector");
-        assert!(text.contains("└──"), "last connector");
+        assert!(text.contains("▾ api"), "expanded workspace glyph");
+        assert!(text.contains("├"), "non-last connector");
+        assert!(text.contains("└"), "last connector");
         assert!(text.contains("impl"));
         assert!(text.contains("review"));
-        assert!(text.contains("▼ web"));
+        assert!(text.contains("▾ web"));
         assert!(text.contains("ops"));
     }
 
@@ -316,7 +340,7 @@ mod tests {
         let lines = render_tree_lines(&workspaces, &agents, &collapsed, &visible_nodes, None, &BTreeMap::new(), DensityMode::Normal, 40);
         let text = lines_text(&lines);
 
-        assert!(text.contains("▶ api"), "collapsed workspace glyph");
+        assert!(text.contains("▸ api"), "collapsed workspace glyph");
         assert!(!text.contains("impl"), "agents hidden when collapsed");
     }
 
@@ -332,11 +356,11 @@ mod tests {
         let lines = render_tree_lines(&workspaces, &agents, &collapsed, &visible_nodes, None, &BTreeMap::new(), DensityMode::Normal, 40);
         let text = lines_text(&lines);
 
-        assert!(text.contains("◆ api"), "empty workspace uses diamond");
+        assert!(text.contains("◇ api"), "empty workspace uses diamond");
     }
 
     #[test]
-    fn selection_applies_reversed_style() {
+    fn selection_applies_surface_bg() {
         let workspaces = vec![workspace("w1", "api")];
         let agents = vec![agent("w1", "impl", "running")];
         let collapsed = HashSet::new();
@@ -362,19 +386,18 @@ mod tests {
             40,
         );
 
-        // The selected line's spans should carry REVERSED modifier.
         let selected_line = &lines[1];
-        let has_reversed = selected_line
+        let has_bg = selected_line
             .spans
             .iter()
-            .any(|s| s.style.add_modifier == Modifier::REVERSED);
-        assert!(has_reversed, "selected node gets REVERSED modifier");
+            .any(|s| s.style.bg == Some(palette::SURFACE));
+        assert!(has_bg, "selected node gets Surface bg tint");
     }
 
     #[test]
     fn truncates_on_char_boundaries() {
-        use super::super::truncate_chars;
-        assert_eq!(truncate_chars("abcd", 3), "ab…");
-        assert_eq!(truncate_chars("⚠abcd", 3), "⚠a…");
+        use super::super::truncate_display;
+        assert_eq!(truncate_display("abcd", 3), "ab…");
+        assert_eq!(truncate_display("⚠abcd", 3), "⚠a…");
     }
 }

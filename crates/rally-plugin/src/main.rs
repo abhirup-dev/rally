@@ -12,6 +12,8 @@ use widgets::{
 use zellij_tile::prelude::*;
 use zellij_widgets::prelude::{Line, Modifier, Paragraph, PluginPane, Span, Style, Text};
 
+use theme::palette;
+
 mod theme;
 mod tree_merge;
 mod widgets;
@@ -268,10 +270,9 @@ impl ZellijPlugin for RallyPlugin {
 
     fn render(&mut self, rows: usize, cols: usize) {
         let rows = rows as u16;
-        let cols = cols.min(40) as u16;
+        let cols = cols as u16;
 
-        // Update scroll before building lines so build_lines can use self.scroll_offset.
-        self.update_scroll(rows as usize);
+        self.update_scroll(rows as usize, cols as usize);
 
         let lines = self.build_lines(rows as usize, cols as usize);
         let text = Text::from(lines);
@@ -388,7 +389,7 @@ impl RallyPlugin {
         let is_valid = self
             .selection
             .as_ref()
-            .map_or(false, |sel| nodes.iter().any(|n| sel.matches_node(n)));
+            .is_some_and(|sel| nodes.iter().any(|n| sel.matches_node(n)));
         if !is_valid {
             self.selection = Some(node_to_selection(&nodes[0]));
         }
@@ -505,9 +506,17 @@ impl RallyPlugin {
     // ── Scroll ────────────────────────────────────────────────────────────
 
     /// Adjust scroll_offset so the selected node stays in the visible tree window.
-    fn update_scroll(&mut self, total_rows: usize) {
-        // Approximate fixed chrome: 2 header + 4 status/inbox.
-        let chrome = 6usize;
+    fn update_scroll(&mut self, total_rows: usize, cols: usize) {
+        let ctx = RenderCtx {
+            cols,
+            agents: &self.agents,
+            inbox_items: &self.inbox_items,
+            filter: (!self.filter.is_empty()).then_some(self.filter.as_str()),
+            status_message: self.status_message.as_deref(),
+        };
+        let inbox_count = render_inbox_lines(&ctx, self.show_inbox_detail).len();
+        let status_count = render_status_lines(&ctx).len();
+        let chrome = 3 + inbox_count + status_count;
         let tree_rows = total_rows.saturating_sub(chrome).max(1);
 
         if let Some(idx) = self.selected_index() {
@@ -524,35 +533,43 @@ impl RallyPlugin {
     fn build_lines(&self, rows: usize, cols: usize) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
 
-        // Header (2 lines).
+        lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
-            " Rally ",
-            Style::default().add_modifier(Modifier::BOLD),
+            " Rally",
+            Style::default()
+                .fg(palette::ROSE)
+                .add_modifier(Modifier::BOLD),
         )));
-        lines.push(Line::from("─".repeat(cols)));
+        lines.push(Line::from(""));
 
         if let Some(ref err) = self.last_error {
-            lines.push(Line::from(Span::styled(
-                format!("⚠ {}", truncate(err, cols.saturating_sub(2))),
-                Style::default().fg(zellij_widgets::prelude::Color::Red),
-            )));
+            let msg = truncate(err, cols.saturating_sub(4)).to_string();
+            lines.push(Line::from(vec![
+                Span::styled(
+                    " ! ",
+                    Style::default()
+                        .fg(palette::LOVE)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(msg, Style::default().fg(palette::LOVE)),
+            ]));
             return lines;
         }
 
         if self.workspaces.is_empty() && self.state_version.is_none() {
             if self.permission_denied {
                 lines.push(Line::from(Span::styled(
-                    "Permission denied.",
-                    Style::default().fg(zellij_widgets::prelude::Color::Red),
+                    "  Permission denied.",
+                    Style::default().fg(palette::LOVE),
                 )));
                 lines.push(Line::from(Span::styled(
-                    "Grant RunCommands to continue.",
-                    Style::default().add_modifier(Modifier::DIM),
+                    "  Grant RunCommands to continue.",
+                    Style::default().fg(palette::SUBTLE),
                 )));
             } else {
                 lines.push(Line::from(Span::styled(
-                    "Loading state…",
-                    Style::default().add_modifier(Modifier::DIM),
+                    "  Loading state...",
+                    Style::default().fg(palette::SUBTLE),
                 )));
             }
             return lines;
@@ -574,7 +591,7 @@ impl RallyPlugin {
         let inbox_lines = render_inbox_lines(&ctx, self.show_inbox_detail);
         let status_lines = render_status_lines(&ctx);
 
-        let chrome = 2 + inbox_lines.len() + status_lines.len(); // header already in `lines`
+        let chrome = 3 + inbox_lines.len() + status_lines.len();
         let tree_rows = rows.saturating_sub(chrome).max(1);
 
         // Tree.
@@ -609,7 +626,6 @@ impl RallyPlugin {
 
     #[cfg(test)]
     fn render_to_string(&self, rows: usize, cols: usize) -> String {
-        let cols = cols.min(40);
         let rows_u16 = rows as u16;
         let cols_u16 = cols as u16;
         let lines = self.build_lines(rows, cols);
@@ -875,24 +891,53 @@ fn truncate(s: &str, max: usize) -> &str {
 }
 
 fn help_lines(width: usize) -> Vec<Line<'static>> {
-    let _ = width;
-    vec![
-        Line::from(Span::styled(
-            "Keys",
-            Style::default().add_modifier(Modifier::BOLD),
-        )),
-        Line::from("j/k      move selection"),
-        Line::from("h/l      collapse/expand node"),
-        Line::from("d        toggle density mode"),
-        Line::from("f        focus selected node"),
-        Line::from("a        action menu"),
-        Line::from("K        ack selected item"),
-        Line::from("r        restart selected agent"),
-        Line::from("s        spawn wizard"),
-        Line::from("/        filter agents"),
-        Line::from("i        inbox detail"),
-        Line::from("Esc      close mode"),
-    ]
+    use theme::palette;
+
+    let heading = Style::default()
+        .fg(palette::IRIS)
+        .add_modifier(Modifier::BOLD);
+    let key = Style::default().fg(palette::FOAM);
+    let desc = Style::default().fg(palette::TEXT);
+    let dim = Style::default().fg(palette::MUTED);
+
+    let entries: &[(&str, &str)] = &[
+        ("j k", "move selection"),
+        ("h l", "collapse / expand"),
+        ("d", "toggle density"),
+        ("f", "focus pane"),
+        ("a", "action menu"),
+        ("K", "acknowledge"),
+        ("r", "restart agent"),
+        ("s", "spawn wizard"),
+        ("/", "filter agents"),
+        ("i", "inbox detail"),
+        ("Esc", "close overlay"),
+    ];
+
+    let mut lines = vec![
+        Line::from(""),
+        Line::from(Span::styled(" Keybindings", heading)),
+        Line::from(""),
+    ];
+
+    for (k, d) in entries {
+        lines.push(Line::from(vec![
+            Span::raw("  "),
+            Span::styled(format!("{:<14}", k), key),
+            Span::styled(*d, desc),
+        ]));
+    }
+
+    lines.push(Line::from(""));
+
+    let hint = "Esc to close ";
+    let fill = width.saturating_sub(hint.len());
+    lines.push(Line::from(vec![
+        Span::raw(" ".repeat(fill)),
+        Span::styled(hint, dim),
+    ]));
+
+    lines
 }
 
 #[cfg(test)]
