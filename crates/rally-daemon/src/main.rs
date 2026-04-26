@@ -68,6 +68,9 @@ async fn run() -> anyhow::Result<()> {
 }
 
 fn data_dir() -> std::path::PathBuf {
+    if let Ok(dir) = std::env::var("RALLY_DATA_DIR") {
+        return std::path::PathBuf::from(dir);
+    }
     if let Ok(data_home) = std::env::var("XDG_DATA_HOME") {
         return std::path::PathBuf::from(data_home).join("rally");
     }

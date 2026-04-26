@@ -53,17 +53,30 @@ bd close <id>         # Complete work
 ## Build & Test
 
 ```bash
+# Preferred: use Makefile targets
+make dev             # wipe dev DB, build everything, start daemon + zellij
+make dev-restart     # rebuild + restart without wiping state
+make dev-plugin      # rebuild wasm only (zellij hot-reloads)
+make test            # cargo test --workspace
+make ci              # fmt + clippy + test
+
+# Raw commands (if you need them):
 cargo build                # uses default-members (excludes rally-plugin wasm)
 cargo test --workspace
 cargo clippy --all-targets -- -D warnings
-
-# Plugin (wasm32-wasip1, built separately):
-cargo build -p rally-plugin --target wasm32-wasip1 --release
-cp target/wasm32-wasip1/release/rally-plugin.wasm ~/.config/rally/rally.wasm
-
-# Test plugin in zellij (always use --skip-plugin-cache to avoid stale wasm):
-PATH="$PWD/target/debug:$PATH" zellij -n layouts/sidebar-dev.kdl
 ```
+
+### Dev / Prod DB separation
+
+Dev and prod use separate DB + socket paths to avoid stale test data colliding:
+
+| | DB dir | Socket |
+|---|---|---|
+| **Dev** (`make dev`) | `target/dev-state/` | `target/dev-state/rally.sock` |
+| **Prod** (default) | `~/.local/share/rally/` | `/tmp/rally/rally.sock` |
+
+Controlled by env vars `RALLY_DATA_DIR` and `RALLY_DAEMON_SOCKET_PATH`. The Makefile
+`export`s both so the daemon, CLI, and plugin all agree on paths.
 
 ### Plugin build notes
 
@@ -71,13 +84,14 @@ PATH="$PWD/target/debug:$PATH" zellij -n layouts/sidebar-dev.kdl
 - It is excluded from `default-members` — never builds with `cargo build --workspace`.
 - Zellij aggressively caches plugin wasm. The dev layout uses `skip_plugin_cache true` to always load fresh.
 - Artifact path: `target/wasm32-wasip1/release/rally-plugin.wasm` (hyphen, not underscore).
-- **Permissions**: The plugin needs `RunCommands` + `ReadApplicationState`. Pre-grant via:
+- **Permissions**: The plugin needs `RunCommands` + `ReadApplicationState` + `ChangeApplicationState`. Pre-grant via:
   ```bash
   # macOS cache path:
   cat > ~/Library/Caches/org.Zellij-Contributors.Zellij/permissions.kdl <<'KDL'
   "/Users/abhirupdas/.config/rally/rally.wasm" {
       RunCommands
       ReadApplicationState
+      ChangeApplicationState
   }
   KDL
   ```
