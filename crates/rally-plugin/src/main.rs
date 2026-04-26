@@ -626,7 +626,6 @@ impl RallyPlugin {
 
     #[cfg(test)]
     fn render_to_string(&self, rows: usize, cols: usize) -> String {
-        let cols = cols.min(40);
         let rows_u16 = rows as u16;
         let cols_u16 = cols as u16;
         let lines = self.build_lines(rows, cols);
