@@ -65,28 +65,91 @@ fn all_triggers() -> [AgentTrigger; 11] {
 fn exhaustive_transition_table() {
     // Every valid (state, trigger) → expected_state pair from the state machine.
     let valid: &[(AgentState, AgentTrigger, AgentState)] = &[
-        (AgentState::Initializing, AgentTrigger::Started, AgentState::Running),
-
-        (AgentState::Running, AgentTrigger::IdleTimeout, AgentState::Idle),
-        (AgentState::Running, AgentTrigger::HookWaitingForInput, AgentState::WaitingForInput),
-        (AgentState::Running, AgentTrigger::CaptureRuleAttention, AgentState::AttentionRequired),
-        (AgentState::Running, AgentTrigger::HookCompleted, AgentState::Completed),
-        (AgentState::Running, AgentTrigger::HookFailed, AgentState::Failed),
-        (AgentState::Running, AgentTrigger::StopRequested, AgentState::Stopped),
-
-        (AgentState::Idle, AgentTrigger::InputReceived, AgentState::Running),
-        (AgentState::Idle, AgentTrigger::HookWaitingForInput, AgentState::WaitingForInput),
-        (AgentState::Idle, AgentTrigger::StopRequested, AgentState::Stopped),
-
-        (AgentState::WaitingForInput, AgentTrigger::InputResolved, AgentState::Running),
-        (AgentState::WaitingForInput, AgentTrigger::CaptureRuleAttention, AgentState::AttentionRequired),
-        (AgentState::WaitingForInput, AgentTrigger::StopRequested, AgentState::Stopped),
-
-        (AgentState::AttentionRequired, AgentTrigger::Acknowledged, AgentState::Running),
-        (AgentState::AttentionRequired, AgentTrigger::StopRequested, AgentState::Stopped),
-
-        (AgentState::Stopped, AgentTrigger::Restarted, AgentState::Initializing),
-        (AgentState::Failed, AgentTrigger::Restarted, AgentState::Initializing),
+        (
+            AgentState::Initializing,
+            AgentTrigger::Started,
+            AgentState::Running,
+        ),
+        (
+            AgentState::Running,
+            AgentTrigger::IdleTimeout,
+            AgentState::Idle,
+        ),
+        (
+            AgentState::Running,
+            AgentTrigger::HookWaitingForInput,
+            AgentState::WaitingForInput,
+        ),
+        (
+            AgentState::Running,
+            AgentTrigger::CaptureRuleAttention,
+            AgentState::AttentionRequired,
+        ),
+        (
+            AgentState::Running,
+            AgentTrigger::HookCompleted,
+            AgentState::Completed,
+        ),
+        (
+            AgentState::Running,
+            AgentTrigger::HookFailed,
+            AgentState::Failed,
+        ),
+        (
+            AgentState::Running,
+            AgentTrigger::StopRequested,
+            AgentState::Stopped,
+        ),
+        (
+            AgentState::Idle,
+            AgentTrigger::InputReceived,
+            AgentState::Running,
+        ),
+        (
+            AgentState::Idle,
+            AgentTrigger::HookWaitingForInput,
+            AgentState::WaitingForInput,
+        ),
+        (
+            AgentState::Idle,
+            AgentTrigger::StopRequested,
+            AgentState::Stopped,
+        ),
+        (
+            AgentState::WaitingForInput,
+            AgentTrigger::InputResolved,
+            AgentState::Running,
+        ),
+        (
+            AgentState::WaitingForInput,
+            AgentTrigger::CaptureRuleAttention,
+            AgentState::AttentionRequired,
+        ),
+        (
+            AgentState::WaitingForInput,
+            AgentTrigger::StopRequested,
+            AgentState::Stopped,
+        ),
+        (
+            AgentState::AttentionRequired,
+            AgentTrigger::Acknowledged,
+            AgentState::Running,
+        ),
+        (
+            AgentState::AttentionRequired,
+            AgentTrigger::StopRequested,
+            AgentState::Stopped,
+        ),
+        (
+            AgentState::Stopped,
+            AgentTrigger::Restarted,
+            AgentState::Initializing,
+        ),
+        (
+            AgentState::Failed,
+            AgentTrigger::Restarted,
+            AgentState::Initializing,
+        ),
     ];
 
     // Verify all valid transitions produce expected results.

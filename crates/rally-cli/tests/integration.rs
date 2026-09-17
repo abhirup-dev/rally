@@ -214,7 +214,9 @@ fn ipc_raw(socket_path: &std::path::Path, line: &str) -> serde_json::Value {
 
     let mut reader = BufReader::new(stream);
     let mut resp = String::new();
-    reader.read_line(&mut resp).expect("failed to read response");
+    reader
+        .read_line(&mut resp)
+        .expect("failed to read response");
     serde_json::from_str(&resp).expect("invalid JSON response")
 }
 
@@ -233,7 +235,14 @@ fn bind_pane_updates_agent_pane_ref() {
     // Spawn agent
     let spawn = rally_cmd(harness.socket_path())
         .args([
-            "--json", "agent", "spawn", "--workspace", ws_id, "--role", "test-agent", "--runtime",
+            "--json",
+            "agent",
+            "spawn",
+            "--workspace",
+            ws_id,
+            "--role",
+            "test-agent",
+            "--runtime",
             "claude-code",
         ])
         .output()

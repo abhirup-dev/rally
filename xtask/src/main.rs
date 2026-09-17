@@ -21,7 +21,10 @@ fn main() -> ExitCode {
 
 fn run_ci() -> ExitCode {
     let steps: &[(&str, &[&str])] = &[
-        ("cargo fmt --all --check", &["cargo", "fmt", "--all", "--check"]),
+        (
+            "cargo fmt --all --check",
+            &["cargo", "fmt", "--all", "--check"],
+        ),
         (
             "cargo clippy --all-targets -- -D warnings",
             &["cargo", "clippy", "--all-targets", "--", "-D", "warnings"],
@@ -32,9 +35,7 @@ fn run_ci() -> ExitCode {
     let mut failed = false;
     for (label, args) in steps {
         eprintln!("\n=== {label} ===");
-        let status = Command::new(args[0])
-            .args(&args[1..])
-            .status();
+        let status = Command::new(args[0]).args(&args[1..]).status();
         match status {
             Ok(s) if s.success() => eprintln!("  ✓ passed"),
             Ok(s) => {

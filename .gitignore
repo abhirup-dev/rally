@@ -3,3 +3,8 @@
 .dolt/
 *.db
 .beads-credential-key
+
+target/
+
+# bv (beads viewer) local config and caches
+.bv/

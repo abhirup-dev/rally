@@ -362,7 +362,11 @@ fn uncommitted_write_is_rolled_back() {
     {
         let store = Store::open(&path).unwrap();
         let workspaces = WorkspaceRepo::list(&store).unwrap();
-        assert_eq!(workspaces.len(), 1, "rolled-back row must not appear after reopen");
+        assert_eq!(
+            workspaces.len(),
+            1,
+            "rolled-back row must not appear after reopen"
+        );
         assert_eq!(workspaces[0].name.as_str(), "committed");
     }
 }
